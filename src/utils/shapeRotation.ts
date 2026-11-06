@@ -39,12 +39,12 @@ export const allRotations = (vs: Voxel[]): Voxel[][] => {
 /** Orientation-independent key; with mirror=true reflections count as the same shape. */
 export const canonicalKey = (vs: Voxel[], mirror: boolean) => {
   const sets = mirror ? [...allRotations(vs), ...allRotations(mirrorShape(vs))] : allRotations(vs);
-  return sets.map(shapeKey).sort()[0];
+  return sets.map(shapeKey).sort()[0]!;
 };
 
 export const randomOrientation = (vs: Voxel[], allowMirror: boolean) => {
   let s = normalize(vs);
   if (allowMirror && Math.random() < 0.5) s = mirrorShape(s);
   const rots = allRotations(s);
-  return rots[Math.floor(Math.random() * rots.length)];
+  return rots[Math.floor(Math.random() * rots.length)]!;
 };

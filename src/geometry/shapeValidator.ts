@@ -10,15 +10,15 @@ export const DIRS: Voxel[] = [
 export const isConnected = (vs: Voxel[]) => {
   if (vs.length === 0) return false;
   const set = new Set(vs.map(keyOf));
-  const seen = new Set<string>([keyOf(vs[0])]);
-  const stack = [vs[0]];
+  const seen = new Set<string>([keyOf(vs[0]!)]);
+  const stack: Voxel[] = [vs[0]!];
   while (stack.length) {
     const c = stack.pop()!;
     for (const d of DIRS) {
       const k = keyOf({ x: c.x + d.x, y: c.y + d.y, z: c.z + d.z });
       if (set.has(k) && !seen.has(k)) {
         seen.add(k);
-        const [x, y, z] = k.split(",").map(Number);
+        const [x, y, z] = k.split(",").map(Number) as [number, number, number];
         stack.push({ x, y, z });
       }
     }

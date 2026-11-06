@@ -34,7 +34,7 @@ function App() {
   const [variations, setVariations] = useState(false);
   const list = useMemo(() => (setKind === "presets" ? SHAPES : fundamentalShapes(mirrorSame)), [setKind, mirrorSame]);
   const [index, setIndex] = useState(0);
-  const [voxels, setVoxels] = useState<Voxel[]>(SHAPES[0].voxels);
+  const [voxels, setVoxels] = useState<Voxel[]>(SHAPES[0]!.voxels);
   const [frame, setFrame] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
@@ -52,7 +52,7 @@ function App() {
   };
   const pick = (i: number) => {
     const n = (i + list.length) % list.length;
-    load(variations ? randomOrientation(list[n].voxels, !mirrorSame) : list[n].voxels, n);
+    load(variations ? randomOrientation(list[n]!.voxels, !mirrorSame) : list[n]!.voxels, n);
   };
 
   const validation = validateShape(voxels);
@@ -71,7 +71,7 @@ function App() {
     }
   }, [voxels, look.unit, holes, validation.valid]);
 
-  const fileName = `tetrocube-${(name ?? "custom").split(" ")[0].replace(/\W/g, "").toLowerCase()}`;
+  const fileName = `tetrocube-${(name ?? "custom").split(" ")[0]!.replace(/\W/g, "").toLowerCase()}`;
   const mat = { matte: [0, 0.95], satin: [0.05, 0.5], plastic: [0, 0.25], metal: [0.9, 0.3] }[look.material];
   const is3D = ["x", "y", "z"].every((k) => new Set(voxels.map((v) => v[k as Axis])).size > 1);
 
@@ -89,9 +89,9 @@ function App() {
             <Btn onClick={() => pick(index - 1)}>← Previous</Btn>
             <Btn onClick={() => pick(index + 1)}>Next →</Btn>
             <Btn onClick={() => load(randomGrowth(!mirrorSame), index)} title="Grow 4 connected cubes at random">Randomize</Btn>
-            <Btn onClick={() => load(list[index % list.length].voxels, index)}>Reset Shape</Btn>
+            <Btn onClick={() => load(list[index % list.length]!.voxels, index)}>Reset Shape</Btn>
           </div>
-          <Segmented value={setKind} onChange={(v) => { setSetKind(v); setIndex(0); load((v === "presets" ? SHAPES : fundamentalShapes(mirrorSame))[0].voxels, 0); }}
+          <Segmented value={setKind} onChange={(v) => { setSetKind(v); setIndex(0); load((v === "presets" ? SHAPES : fundamentalShapes(mirrorSame))[0]!.voxels, 0); }}
             options={[{ v: "presets", l: "Tetris + 3D presets" }, { v: "fundamental", l: "Unique forms" }]} />
           <Toggle label="Mirror images count as same" checked={mirrorSame} onChange={setMirrorSame} />
           <Toggle label="Random rotation / mirror variations" checked={variations} onChange={setVariations} />
@@ -125,7 +125,7 @@ function App() {
           )}
           <div className="grid grid-cols-2 gap-2">
             <Btn variant="outline" disabled={selected === null} onClick={() => { setVoxels(voxels.filter((_, i) => i !== selected)); setSelected(null); }}>Remove selected</Btn>
-            <Btn variant="outline" onClick={() => load(list[index % list.length].voxels, index)}>Reset to valid</Btn>
+            <Btn variant="outline" onClick={() => load(list[index % list.length]!.voxels, index)}>Reset to valid</Btn>
           </div>
         </Section>
 
