@@ -31,7 +31,7 @@ function Framer({ voxels, unit, frameKey }: { voxels: Voxel[]; unit: number; fra
     const ext = (k: "x" | "y" | "z") => Math.max(...voxels.map((v) => v[k])) - Math.min(...voxels.map((v) => v[k])) + 1;
     const h = voxels.length ? ext("y") * unit : unit;
     const r = Math.max(voxels.length ? Math.hypot(ext("x"), ext("y"), ext("z")) * unit : unit, unit * 2) / 2;
-    const dist = (r / Math.sin((camera.fov * Math.PI) / 360)) * 1.25;
+    const dist = (r / Math.sin((camera.fov * Math.PI) / 360)) * 1.8;
     const dir = new THREE.Vector3(1, 0.8, 1.2).normalize();
     camera.position.copy(dir.multiplyScalar(dist)).add(new THREE.Vector3(0, h / 2, 0));
     camera.near = 0.01;
