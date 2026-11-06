@@ -15,5 +15,5 @@ describe("tetrocubes", () => {
   it("disconnected shapes are rejected", () =>
     expect(validateShape([{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }, { x: 5, y: 0, z: 0 }]).valid).toBe(false));
   it("removes internal faces (I shape has 18 external faces)", () =>
-    expect(buildSurface(SHAPES[0].voxels, 1).getAttribute("position").count).toBe(18 * 6));
+    expect(buildSurface(SHAPES[0]!.voxels, 1).getAttribute("position").count).toBe(18 * 6));
 });

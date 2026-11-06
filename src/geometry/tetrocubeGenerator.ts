@@ -61,7 +61,7 @@ export const randomGrowth = (allowMirror: boolean): Voxel[] => {
   const s: Voxel[] = [{ x: 0, y: 0, z: 0 }];
   while (s.length < 4) {
     const opts = freeNeighbors(s);
-    s.push(opts[Math.floor(Math.random() * opts.length)]);
+    s.push(opts[Math.floor(Math.random() * opts.length)]!);
   }
   return randomOrientation(s, allowMirror);
 };
