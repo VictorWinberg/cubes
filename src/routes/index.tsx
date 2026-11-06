@@ -15,9 +15,9 @@ export const Route = createFileRoute("/")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "Tetrocube — 3D four-cube shape generator" },
+      { title: "Cubes — 3D four-cube shape generator" },
       { name: "description", content: "Generate, rotate, edit, drill and export every 3D shape made of four connected cubes." },
-      { property: "og:title", content: "Tetrocube — 3D four-cube shape generator" },
+      { property: "og:title", content: "Cubes — 3D four-cube shape generator" },
       { property: "og:description", content: "Tetris pieces, expanded into three dimensions. Export GLB and STL." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -198,7 +198,7 @@ function Logo() {
         <span className="rounded-sm bg-primary" /><span className="rounded-sm bg-foreground" />
       </div>
       <div>
-        <div className="font-display text-base font-bold leading-none tracking-tight">Tetrocube</div>
+        <div className="font-display text-base font-bold leading-none tracking-tight">Cubes</div>
         <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">4-cube shape lab</div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-# Polycube Shape Studio
+# Cubes
 
 Implement exactly the screenshot and nothing else
 

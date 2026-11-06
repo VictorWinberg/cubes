@@ -13,7 +13,7 @@ const download = (data: BlobPart, name: string, type: string) => {
 
 const makeMesh = (geometry: THREE.BufferGeometry, color: string, metal = 0, rough = 0.5) => {
   const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, metalness: metal, roughness: rough }));
-  m.name = "Tetrocube";
+  m.name = "Cubes";
   return m;
 };
 
