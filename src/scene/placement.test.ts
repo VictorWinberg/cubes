@@ -6,6 +6,7 @@ import {
   addOffsets,
   allWorldVoxels,
   collectOccupancy,
+  dropToRestingOffset,
   findFreeOffset,
   findSpawnOffsetTop,
   minWorldY,
@@ -96,6 +97,17 @@ describe("placement", () => {
     expect(minWorldY(p)).toBe(-1);
     expect(violatesFloor(p)).toBe(true);
     expect(violatesFloor(piece("b", { x: 0, y: 0, z: 0 }))).toBe(false);
+  });
+
+  it("dropToRestingOffset moves piece down until floor or block", () => {
+    const floorPiece = piece("floor", { x: 0, y: 0, z: 0 });
+    const hovering = piece("hover", { x: 0, y: 10, z: 0 });
+    expect(dropToRestingOffset(hovering, [floorPiece])).toEqual({ x: 0, y: 1, z: 0 });
+  });
+
+  it("dropToRestingOffset returns current offset when already resting", () => {
+    const a = piece("a", { x: 0, y: 0, z: 0 });
+    expect(dropToRestingOffset(a, [])).toEqual({ x: 0, y: 0, z: 0 });
   });
 });
 

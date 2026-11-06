@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Viewport, type ViewportPiece } from "@/components/Viewport";
 import { Btn, ColorField, Range, Section, Segmented, Toggle } from "@/components/ui-bits";
+import { cloneTetracubeBox444Pieces } from "@/geometry/tetracubeBox444";
 import { SHAPES } from "@/geometry/tetrisShapes";
 import { identifyShape, pickRandom, randomGrowth } from "@/geometry/tetrocubeGenerator";
 import { validateShape } from "@/geometry/shapeValidator";
@@ -19,11 +20,13 @@ import { exportGLB, exportSTL, mergeTranslatedGeometries } from "@/utils/exporte
 import {
   addOffsets,
   allWorldVoxels,
+  dropToRestingOffset,
   findSpawnOffsetTop,
   nextPieceId,
   offsetDelta,
   pieceGroupPosition,
   violatesFloor,
+  violatesGridBox444,
   wouldOverlap,
 } from "@/scene/placement";
 import { validateScene } from "@/scene/sceneValidator";
@@ -120,32 +123,48 @@ function App() {
     selectedPieceIdRef.current = selectedPieceId;
   }, [selectedPieceId]);
 
+  const applySceneLookFromLab = () => {
+    labLookSnap.current = look;
+    labHolesSnap.current = holes;
+    if (sceneLookSnap.current && sceneHolesSnap.current) {
+      setLook(sceneLookSnap.current);
+      setHoles(sceneHolesSnap.current);
+    } else {
+      setLook((s) => {
+        const nl = sceneLookFrom(s);
+        sceneLookSnap.current = nl;
+        return nl;
+      });
+      setHoles((h) => {
+        const nh = sceneHolesFrom(h);
+        sceneHolesSnap.current = nh;
+        return nh;
+      });
+    }
+  };
+
   const switchMode = (next: AppMode) => {
     if (mode === next) return;
-    if (mode === "lab" && next === "scene") {
-      labLookSnap.current = look;
-      labHolesSnap.current = holes;
-      if (sceneLookSnap.current && sceneHolesSnap.current) {
-        setLook(sceneLookSnap.current);
-        setHoles(sceneHolesSnap.current);
-      } else {
-        setLook((s) => {
-          const nl = sceneLookFrom(s);
-          sceneLookSnap.current = nl;
-          return nl;
-        });
-        setHoles((h) => {
-          const nh = sceneHolesFrom(h);
-          sceneHolesSnap.current = nh;
-          return nh;
-        });
-      }
-    } else if (mode === "scene" && next === "lab") {
+    const leavingSceneLike = mode === "scene" || mode === "solver";
+    const enteringSceneLike = next === "scene" || next === "solver";
+
+    if (mode === "lab" && enteringSceneLike) {
+      applySceneLookFromLab();
+    } else if (leavingSceneLike && next === "lab") {
       sceneLookSnap.current = look;
       sceneHolesSnap.current = holes;
       setLook(labLookSnap.current ?? defaultLabLook());
       setHoles(labHolesSnap.current ?? defaultLabHoles());
     }
+
+    if (next === "solver") {
+      setPieces(cloneTetracubeBox444Pieces());
+      setSelectedPieceId(null);
+    } else if (mode === "solver") {
+      setPieces([]);
+      setSelectedPieceId(null);
+    }
+
     setMode(next);
   };
 
@@ -189,7 +208,7 @@ function App() {
 
   const sceneGeometries = useMemo(() => {
     const map = new Map<string, ReturnType<typeof buildPieceGeometry>>();
-    if (mode !== "scene") return map;
+    if (mode !== "scene" && mode !== "solver") return map;
     for (const p of pieces) {
       map.set(p.id, buildPieceGeometry(p.voxels, look, holes));
     }
@@ -198,7 +217,7 @@ function App() {
   }, [mode, pieces, look.unit, look.bevel, look.bevelRadius, look.bevelSegments, holes]);
 
   const worldVoxels = useMemo(
-    () => (mode === "scene" ? allWorldVoxels(pieces) : voxels),
+    () => (mode === "scene" || mode === "solver" ? allWorldVoxels(pieces) : voxels),
     [mode, pieces, voxels],
   );
 
@@ -220,6 +239,20 @@ function App() {
           position: [0, 0, 0],
         },
       ];
+    }
+    if (mode === "solver") {
+      const sceneOff = displayOffset(worldVoxels);
+      return pieces.map((p) => {
+        const localOff = displayOffset(p.voxels);
+        return {
+          id: p.id,
+          voxels: p.voxels,
+          geometry: sceneGeometries.get(p.id) ?? labGeometry,
+          color: p.color ?? look.color,
+          position: pieceGroupPosition(p, sceneOff, localOff, look.unit),
+          selected: p.id === selectedPieceId,
+        };
+      });
     }
     const sceneOff = displayOffset(worldVoxels);
     return pieces.map((p) => {
@@ -321,6 +354,7 @@ function App() {
     const nextOffset = addOffsets(selectedPiece.offset, offsetDelta(axis, dir));
     const others = pieces.filter((p) => p.id !== selectedPiece.id);
     const candidate = { voxels: selectedPiece.voxels, offset: nextOffset };
+    if (mode === "solver" && violatesGridBox444(candidate)) return;
     if (violatesFloor(candidate)) return;
     if (wouldOverlap(candidate, others)) return;
     setPieces((ps) =>
@@ -338,6 +372,7 @@ function App() {
         direction === 1 ? rotateShape(cur.voxels, axis) : rotateShapeCCW(cur.voxels, axis);
       const others = ps.filter((p) => p.id !== id);
       const candidate = { voxels: rotated, offset: cur.offset };
+      if (mode === "solver" && violatesGridBox444(candidate)) return ps;
       if (violatesFloor(candidate)) return ps;
       if (wouldOverlap(candidate, others)) return ps;
       return ps.map((p) => (p.id === id ? { ...p, voxels: rotated } : p));
@@ -353,6 +388,7 @@ function App() {
       const mirrored = normalize(mirrorShape(cur.voxels));
       const others = ps.filter((p) => p.id !== id);
       const candidate = { voxels: mirrored, offset: cur.offset };
+      if (mode === "solver" && violatesGridBox444(candidate)) return ps;
       if (violatesFloor(candidate)) return ps;
       if (wouldOverlap(candidate, others)) return ps;
       return ps.map((p) => (p.id === id ? { ...p, voxels: mirrored } : p));
@@ -360,7 +396,7 @@ function App() {
   };
 
   const rotateSelectedOrLab = (axis: Axis) => {
-    if (mode === "scene" && selectedPiece) {
+    if ((mode === "scene" || mode === "solver") && selectedPiece) {
       rotateSelectedPieceAxis(axis);
       return;
     }
@@ -368,7 +404,7 @@ function App() {
   };
 
   const mirrorSelectedOrLab = () => {
-    if (mode === "scene" && selectedPiece) {
+    if ((mode === "scene" || mode === "solver") && selectedPiece) {
       mirrorSelectedPiece();
       return;
     }
@@ -379,12 +415,12 @@ function App() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.key === "Enter" && !e.repeat) {
+      if (e.key === "Enter" && !e.repeat && mode === "scene") {
         e.preventDefault();
         addRandomToSceneRef.current();
         return;
       }
-      if (mode !== "scene") return;
+      if (mode !== "scene" && mode !== "solver") return;
       if (e.key === " " && !e.repeat) {
         const id = selectedPieceIdRef.current;
         if (!id) return;
@@ -392,16 +428,18 @@ function App() {
         setPieces((ps) => {
           const cur = ps.find((p) => p.id === id);
           if (!cur) return ps;
-          const nextOffset = addOffsets(cur.offset, offsetDelta("y", -1));
           const others = ps.filter((p) => p.id !== cur.id);
-          const candidate = { voxels: cur.voxels, offset: nextOffset };
-          if (violatesFloor(candidate)) return ps;
-          if (wouldOverlap(candidate, others)) return ps;
+          const nextOffset = dropToRestingOffset(cur, others);
+          const { offset: o } = cur;
+          if (nextOffset.x === o.x && nextOffset.y === o.y && nextOffset.z === o.z) return ps;
+          const dropped = { ...cur, offset: nextOffset };
+          if (mode === "solver" && violatesGridBox444(dropped)) return ps;
           return ps.map((p) => (p.id === cur.id ? { ...p, offset: nextOffset } : p));
         });
         return;
       }
       if (e.key === "n" || e.key === "N") {
+        if (mode === "solver") return;
         e.preventDefault();
         nextRandomPieceInScene();
         return;
@@ -424,14 +462,20 @@ function App() {
       }
       const id = selectedPieceIdRef.current;
       if (!id) return;
-      if (e.key === "ArrowUp") {
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
         e.preventDefault();
-        rotateSelectedPieceAxis("x", -1);
-        return;
-      }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        rotateSelectedPieceAxis("x");
+        const dirY = e.key === "ArrowUp" ? (1 as const) : (-1 as const);
+        setPieces((ps) => {
+          const cur = ps.find((p) => p.id === id);
+          if (!cur) return ps;
+          const nextOffset = addOffsets(cur.offset, offsetDelta("y", dirY));
+          const others = ps.filter((p) => p.id !== cur.id);
+          const candidate = { voxels: cur.voxels, offset: nextOffset };
+          if (mode === "solver" && violatesGridBox444(candidate)) return ps;
+          if (violatesFloor(candidate)) return ps;
+          if (wouldOverlap(candidate, others)) return ps;
+          return ps.map((p) => (p.id === cur.id ? { ...p, offset: nextOffset } : p));
+        });
         return;
       }
       if (e.key === "ArrowLeft") {
@@ -460,6 +504,7 @@ function App() {
         const nextOffset = addOffsets(cur.offset, offsetDelta(axis, dir));
         const others = ps.filter((p) => p.id !== cur.id);
         const candidate = { voxels: cur.voxels, offset: nextOffset };
+        if (mode === "solver" && violatesGridBox444(candidate)) return ps;
         if (violatesFloor(candidate)) return ps;
         if (wouldOverlap(candidate, others)) return ps;
         return ps.map((p) => (p.id === cur.id ? { ...p, offset: nextOffset } : p));
@@ -475,7 +520,8 @@ function App() {
   ];
   const is3D = ["x", "y", "z"].every((k) => new Set(voxels.map((v) => v[k as Axis])).size > 1);
 
-  const canExport = mode === "lab" ? validation.valid : pieces.length > 0 && sceneValidation.valid;
+  const canExport =
+    mode === "lab" ? validation.valid : pieces.length > 0 && sceneValidation.valid;
 
   const doExportGLB = () => {
     if (mode === "lab") {
@@ -486,7 +532,13 @@ function App() {
       viewportPieces.map((p) => ({ geometry: p.geometry, position: p.position })),
     );
     if (!merged) return;
-    void exportGLB(merged, look.color, `scene-${pieces.length}pieces`, mat[0], mat[1]);
+    void exportGLB(
+      merged,
+      look.color,
+      mode === "solver" ? "4x4x4-tetracubes" : `scene-${pieces.length}pieces`,
+      mat[0],
+      mat[1],
+    );
     merged.dispose();
   };
 
@@ -499,7 +551,7 @@ function App() {
       viewportPieces.map((p) => ({ geometry: p.geometry, position: p.position })),
     );
     if (!merged) return;
-    exportSTL(merged, `scene-${pieces.length}pieces`);
+    exportSTL(merged, mode === "solver" ? "4x4x4-tetracubes" : `scene-${pieces.length}pieces`);
     merged.dispose();
   };
 
@@ -522,17 +574,21 @@ function App() {
             options={[
               { v: "lab", l: "Shape lab" },
               { v: "scene", l: "Stack scene" },
+              { v: "solver", l: "4³ solver" },
             ]}
           />
           <p className="text-xs text-muted-foreground">
             {mode === "lab"
               ? "Design a single 4-cube piece, then add it to the stack."
-              : "WASD = XZ, Space = down (Y−). Arrows = rotate (↑↓ X, ←→ Y). 1/2/3 or X/Y/Z rotate, F flip, N next, Enter = new piece. Floor y ≥ 0."}
+              : mode === "solver"
+                ? "Reference packing for a 4×4×4: two each of I, O, T, Z 3D, S 3D, T 3D; one each of L, J, S, Z. Move and rotate pieces inside the box (no N/Enter)."
+                : "WASD = XZ, Space = drop. Arrows = ↑↓ move Y, ←→ rotate Y. 1/2/3 or X/Y/Z rotate, F flip, N next, Enter = new piece. Floor y ≥ 0."}
           </p>
         </Section>
 
-        {mode === "scene" && (
+        {(mode === "scene" || mode === "solver") && (
           <Section title={`Scene · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}`}>
+            {mode === "scene" && (
             <div className="grid grid-cols-2 gap-2">
               <Btn
                 variant="primary"
@@ -579,6 +635,26 @@ function App() {
                 Clear scene
               </Btn>
             </div>
+            )}
+            {mode === "solver" && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Same multiset as the classic polycube puzzle: <span className="font-mono">2×</span> I, O, T, Z&nbsp;3D,
+                  S&nbsp;3D, T&nbsp;3D and <span className="font-mono">1×</span> L, J, S, Z — 16 pieces, 64 cells.
+                </p>
+                <Btn
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setPieces(cloneTetracubeBox444Pieces());
+                    setSelectedPieceId(null);
+                    setFrame((f) => f + 1);
+                  }}
+                >
+                  Reset to reference solution
+                </Btn>
+              </div>
+            )}
             {pieces.length > 0 && (
               <ul className="max-h-40 space-y-1 overflow-y-auto">
                 {pieces.map((p, i) => (
@@ -727,9 +803,9 @@ function App() {
               Mirror
             </Btn>
           </div>
-          {mode === "scene" && (
+          {(mode === "scene" || mode === "solver") && (
             <p className="text-xs text-muted-foreground">
-              Selected piece: 1/2/3 or X/Y/Z rotate, F flip. Arrows: ↑↓ X, ←→ Y.
+              Selected piece: 1/2/3 or X/Y/Z rotate, F flip. Arrows: ↑↓ Y move, ←→ Y rotate.
             </p>
           )}
         </Section>
@@ -861,7 +937,7 @@ function App() {
             fmt={(v) => `${v.toFixed(1)} units`}
           />
           <ColorField
-            label={mode === "scene" ? "Default / export color" : "Shape color"}
+            label={mode === "scene" || mode === "solver" ? "Default / export color" : "Shape color"}
             value={look.color}
             onChange={(v) => L("color", v)}
           />
@@ -931,16 +1007,16 @@ function App() {
             selectedVoxel={selected}
             onSelectVoxel={setSelected}
             onAddVoxel={(v) => setVoxels([...voxels, v])}
-            {...(mode === "scene" ? { onSelectPiece: setSelectedPieceId } : {})}
+            {...(mode === "scene" || mode === "solver" ? { onSelectPiece: setSelectedPieceId } : {})}
             colors={VIEW_COLORS}
           />
           <div className="pointer-events-none absolute left-3 top-3 space-y-1.5">
             <div className="rounded-md bg-card/90 px-3 py-2 shadow-sm backdrop-blur">
               <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                {mode === "scene" ? "Scene" : "Shape"}
+                {mode === "scene" ? "Scene" : mode === "solver" ? "4³ solver" : "Shape"}
               </div>
               <div className="text-lg font-semibold leading-tight">
-                {mode === "scene"
+                {mode === "scene" || mode === "solver"
                   ? selectedPiece
                     ? selectedPiece.name
                     : pieces.length
@@ -966,9 +1042,13 @@ function App() {
                   ? "✓ Valid — 4 connected cubes"
                   : validation.errors.join(" ")
                 : pieces.length === 0
-                  ? "Add pieces to start stacking"
+                  ? mode === "solver"
+                    ? "Loading…"
+                    : "Add pieces to start stacking"
                   : sceneValidation.valid
-                    ? `✓ ${pieces.length} piece${pieces.length === 1 ? "" : "s"} — no overlaps`
+                    ? mode === "solver"
+                      ? "✓ 16 pieces fill 4×4×4 — no overlaps"
+                      : `✓ ${pieces.length} piece${pieces.length === 1 ? "" : "s"} — no overlaps`
                     : sceneValidation.errors[0]}
             </div>
           </div>
@@ -982,6 +1062,18 @@ function App() {
                   {voxels.length}/4
                 </b>{" "}
                 · {name ?? "custom"}
+              </>
+            ) : mode === "solver" ? (
+              <>
+                Box <b className="text-foreground">4×4×4</b>
+                {" · "}
+                Pieces <b className="text-foreground">{pieces.length}</b>
+                {selectedPiece && (
+                  <>
+                    {" "}
+                    · sel {selectedPiece.offset.x},{selectedPiece.offset.y},{selectedPiece.offset.z}
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -1004,10 +1096,10 @@ function App() {
               Grid
             </Btn>
             <Btn variant="primary" disabled={!canExport} onClick={doExportGLB}>
-              {mode === "scene" ? "Export scene GLB" : "Export GLB"}
+              {mode === "scene" ? "Export scene GLB" : mode === "solver" ? "Export GLB" : "Export GLB"}
             </Btn>
             <Btn variant="primary" disabled={!canExport} onClick={doExportSTL}>
-              {mode === "scene" ? "Export scene STL" : "Export STL"}
+              {mode === "scene" ? "Export scene STL" : mode === "solver" ? "Export STL" : "Export STL"}
             </Btn>
           </div>
         </footer>
@@ -1017,6 +1109,8 @@ function App() {
 }
 
 function Logo({ mode }: { mode: AppMode }) {
+  const subtitle =
+    mode === "scene" ? "stack puzzle" : mode === "solver" ? "4³ polycube solver" : "4-cube shape lab";
   return (
     <div className="flex items-center gap-2.5">
       <div className="grid h-7 w-7 grid-cols-2 gap-0.5">
@@ -1028,7 +1122,7 @@ function Logo({ mode }: { mode: AppMode }) {
       <div>
         <div className="font-display text-base font-bold leading-none tracking-tight">Cubes</div>
         <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-          {mode === "scene" ? "stack puzzle" : "4-cube shape lab"}
+          {subtitle}
         </div>
       </div>
     </div>

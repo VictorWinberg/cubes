@@ -58,6 +58,35 @@ export const FLOOR_WORLD_Y = 0;
 export const violatesFloor = (piece: Pick<PlacedPiece, "voxels" | "offset">): boolean =>
   minWorldY(piece) < FLOOR_WORLD_Y;
 
+const BOX444 = { min: 0, max: 3 };
+
+/** True if any world cell of `piece` lies outside the inclusive 4×4×4 grid (coordinates 0..3). */
+export const violatesGridBox444 = (piece: Pick<PlacedPiece, "voxels" | "offset">): boolean => {
+  for (const v of toWorldVoxels(piece)) {
+    if (v.x < BOX444.min || v.x > BOX444.max) return true;
+    if (v.y < BOX444.min || v.y > BOX444.max) return true;
+    if (v.z < BOX444.min || v.z > BOX444.max) return true;
+  }
+  return false;
+};
+
+/**
+ * Lowest Y offset reachable from `piece` by repeated −Y steps without crossing the floor
+ * or overlapping `others`. Returns `piece.offset` if it cannot move down at all.
+ */
+export const dropToRestingOffset = (
+  piece: Pick<PlacedPiece, "voxels" | "offset">,
+  others: PlacedPiece[],
+): Voxel => {
+  let offset = piece.offset;
+  while (true) {
+    const next = addOffsets(offset, offsetDelta("y", -1));
+    const candidate = { voxels: piece.voxels, offset: next };
+    if (violatesFloor(candidate) || wouldOverlap(candidate, others)) return offset;
+    offset = next;
+  }
+};
+
 /**
  * Find a grid offset for `voxels` that does not overlap existing pieces.
  * Searches along +X then +Y (stack) in a small set of candidates.

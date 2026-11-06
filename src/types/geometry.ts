@@ -51,8 +51,8 @@ export interface HoleSettings {
   axes: Axis[];
 }
 
-/** App mode: single-shape lab vs multi-piece stack scene. */
-export type AppMode = "lab" | "scene";
+/** App mode: lab, free stack scene, or boxed 4³ demo (two of each fundamental tetracube). */
+export type AppMode = "lab" | "scene" | "solver";
 
 /**
  * A tetrocube instance in the stack scene: local 4-voxel shape plus integer grid offset.
