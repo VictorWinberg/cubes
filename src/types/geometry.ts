@@ -24,10 +24,9 @@ export interface Appearance {
   bevel: boolean;
   bevelRadius: number;
   /**
-   * After each voxel RoundedBox is built, optionally snap vertices at contacts with neighbours.
-   * Combine freely to try silhouette-only vs partial snaps. All false = full per-cube rounding before CSG union.
+   * Per-voxel RoundedBox + CSG union: snap at cube–cube contacts (shared faces always flattened when snapping).
+   * Both false = round every edge between cubes too.
    */
-  bevelSnapSharedFaces: boolean;
   bevelSnapSharedEdges: boolean;
   bevelSnapSharedCorners: boolean;
   /**

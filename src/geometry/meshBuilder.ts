@@ -131,14 +131,13 @@ const neighborFaceFlags = (neighborMask: number) => ({
  * Runs in local space (cube centered at origin); matches RoundedBoxGeometry extent ±half.
  */
 export type BevelJointSnap = {
-  snapSharedFaces: boolean;
   snapSharedEdges: boolean;
   snapSharedCorners: boolean;
 };
 
 /**
  * Snap rounded-box vertices so shared voxel contacts are less rounded.
- * Gates match the former modes: all true ≈ silhouette; faces-only ≈ old "flatFaces"; all false = no snap (full per-cube round).
+ * Shared face caps are always flattened when snapping is enabled (see `doSnap` in buildBeveledSurface).
  */
 const snapInternalJointsToSharpBox = (
   g: THREE.BufferGeometry,
@@ -202,7 +201,7 @@ const snapInternalJointsToSharpBox = (
         z = sz * half;
         x = clampHalf(x);
       }
-    } else if (c === 1 && opts.snapSharedFaces) {
+    } else if (c === 1) {
       if (xp && n.xp) {
         x = half;
         y = clampHalf(y);
@@ -242,7 +241,7 @@ const snapInternalJointsToSharpBox = (
 /**
  * One fused mesh with rounded edges/corners on each voxel.
  * `radiusFrac` is corner radius as a fraction of the unit cube edge (clamped so geometry stays valid).
- * `jointSnap` — which contact snaps to apply before CSG union (all false = round every voxel edge including joints).
+ * `jointSnap` — edge/corner snaps before CSG union; shared face caps are included whenever snapping runs (both false = no snap).
  */
 export const buildBeveledSurface = (
   vs: Voxel[],
@@ -255,7 +254,7 @@ export const buildBeveledSurface = (
   const r = Math.min(Math.max(radiusFrac, 0), 0.45) * unit;
   if (r <= 1e-6) return buildSurface(vs, unit);
 
-  const seg = Math.min(8, Math.max(1, Math.round(roundedSegments)));
+  const seg = Math.min(10, Math.max(1, Math.round(roundedSegments)));
 
   const o = displayOffset(vs);
   const set = new Set(vs.map(keyOf));
@@ -267,8 +266,7 @@ export const buildBeveledSurface = (
     return m;
   };
 
-  const doSnap =
-    jointSnap.snapSharedFaces || jointSnap.snapSharedEdges || jointSnap.snapSharedCorners;
+  const doSnap = jointSnap.snapSharedEdges || jointSnap.snapSharedCorners;
 
   const evaluator = new Evaluator();
   evaluator.attributes = ["position", "normal"];

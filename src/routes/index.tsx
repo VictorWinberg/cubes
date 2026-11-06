@@ -52,12 +52,11 @@ function App() {
     color: "#e8622c",
     edgeColor: "#1d1b18",
     edges: true,
-    bevel: false,
-    bevelRadius: 0.12,
-    bevelSnapSharedFaces: true,
+    bevel: true,
+    bevelRadius: 0.1,
     bevelSnapSharedEdges: true,
     bevelSnapSharedCorners: true,
-    bevelSegments: 2,
+    bevelSegments: 5,
     material: "satin",
     light: 1,
     wireframe: false,
@@ -98,7 +97,6 @@ function App() {
           look.unit,
           look.bevelRadius,
           {
-            snapSharedFaces: look.bevelSnapSharedFaces,
             snapSharedEdges: look.bevelSnapSharedEdges,
             snapSharedCorners: look.bevelSnapSharedCorners,
           },
@@ -117,7 +115,6 @@ function App() {
     look.unit,
     look.bevel,
     look.bevelRadius,
-    look.bevelSnapSharedFaces,
     look.bevelSnapSharedEdges,
     look.bevelSnapSharedCorners,
     look.bevelSegments,
@@ -324,13 +321,8 @@ function App() {
               <div className="text-sm">
                 <div className="mb-1.5 flex justify-between">
                   <span>Bevel at voxel joints (snap before union)</span>
-                  <span className="font-mono text-xs text-muted-foreground">combine</span>
+                  <span className="font-mono text-xs text-muted-foreground">CSG</span>
                 </div>
-                <Toggle
-                  label="Snap shared faces"
-                  checked={look.bevelSnapSharedFaces}
-                  onChange={(v) => L("bevelSnapSharedFaces", v)}
-                />
                 <Toggle
                   label="Snap shared edges"
                   checked={look.bevelSnapSharedEdges}
@@ -342,16 +334,15 @@ function App() {
                   onChange={(v) => L("bevelSnapSharedCorners", v)}
                 />
                 <p className="mt-1.5 text-xs text-muted-foreground">
-                  All on ≈ outer silhouette with sharp seams. All off = round every edge between
-                  cubes too (full per-cube bevel, then fuse). Mix toggles to see where artifacts
-                  come from.
+                  When either is on, shared face caps are flattened too. Both off = full per-cube
+                  rounding between cubes.
                 </p>
               </div>
               <Range
                 label="Bevel segments"
                 value={look.bevelSegments}
                 min={1}
-                max={8}
+                max={10}
                 step={1}
                 onChange={(v) => L("bevelSegments", v)}
                 fmt={(v) => `${Math.round(v)} (smoothness)`}
