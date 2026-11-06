@@ -20,15 +20,9 @@ export interface Appearance {
   color: string;
   edgeColor: string;
   edges: boolean;
-  /** Chamfer/round edges: radius as a fraction of the unit cube (0 = sharp boxes). */
+  /** Chamfer/round edges: radius as a fraction of the unit cube (0 = sharp boxes). Snaps shared faces, edges, and corners between voxels. */
   bevel: boolean;
   bevelRadius: number;
-  /**
-   * Per-voxel RoundedBox + CSG union: snap at cube–cube contacts (shared faces always flattened when snapping).
-   * Both false = round every edge between cubes too.
-   */
-  bevelSnapSharedEdges: boolean;
-  bevelSnapSharedCorners: boolean;
   /**
    * Smoothness of each rounded cube (RoundedBoxGeometry segments). Higher = smoother arcs; 1 = very faceted.
    */
@@ -53,4 +47,21 @@ export interface HoleSettings {
   rimOffset: number;
   /** Drilling directions; at least one when enabled. */
   axes: Axis[];
+}
+
+/** App mode: single-shape lab vs multi-piece stack scene. */
+export type AppMode = "lab" | "scene";
+
+/**
+ * A tetrocube instance in the stack scene: local 4-voxel shape plus integer grid offset.
+ * World cell = local voxel + offset.
+ */
+export interface PlacedPiece {
+  id: string;
+  /** Display label (e.g. shape name). */
+  name: string;
+  voxels: Voxel[];
+  offset: Voxel;
+  /** Optional per-piece color; falls back to global appearance color. */
+  color?: string;
 }

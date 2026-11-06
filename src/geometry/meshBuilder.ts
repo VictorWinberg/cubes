@@ -130,21 +130,14 @@ const neighborFaceFlags = (neighborMask: number) => ({
  *
  * Runs in local space (cube centered at origin); matches RoundedBoxGeometry extent ±half.
  */
-export type BevelJointSnap = {
-  snapSharedEdges: boolean;
-  snapSharedCorners: boolean;
-};
-
 /**
- * Snap rounded-box vertices so shared voxel contacts are less rounded.
- * Shared face caps are always flattened when snapping is enabled (see `doSnap` in buildBeveledSurface).
+ * Snap rounded-box vertices so shared voxel contacts are sharp (faces, edge fillets, and 3-way corners).
  */
 const snapInternalJointsToSharpBox = (
   g: THREE.BufferGeometry,
   neighborMask: number,
   unit: number,
   r: number,
-  opts: BevelJointSnap,
 ) => {
   const half = unit / 2;
   const inner = half - r;
@@ -177,14 +170,14 @@ const snapInternalJointsToSharpBox = (
       ay = Math.abs(y),
       az = Math.abs(z);
 
-    if (c === 3 && opts.snapSharedCorners) {
+    if (c === 3) {
       if (xp && n.xp) x = half;
       else if (xm && n.xm) x = -half;
       if (yp && n.yp) y = half;
       else if (ym && n.ym) y = -half;
       if (zp && n.zp) z = half;
       else if (zm && n.zm) z = -half;
-    } else if (c === 2 && opts.snapSharedEdges) {
+    } else if (c === 2) {
       const gluedX = sx > 0 ? n.xp : n.xm;
       const gluedY = sy > 0 ? n.yp : n.ym;
       const gluedZ = sz > 0 ? n.zp : n.zm;
@@ -241,13 +234,12 @@ const snapInternalJointsToSharpBox = (
 /**
  * One fused mesh with rounded edges/corners on each voxel.
  * `radiusFrac` is corner radius as a fraction of the unit cube edge (clamped so geometry stays valid).
- * `jointSnap` — edge/corner snaps before CSG union; shared face caps are included whenever snapping runs (both false = no snap).
+ * Shared faces, edges, and corners between voxels are snapped flat before CSG union.
  */
 export const buildBeveledSurface = (
   vs: Voxel[],
   unit: number,
   radiusFrac: number,
-  jointSnap: BevelJointSnap,
   roundedSegments = 2,
 ) => {
   if (!vs.length) return buildSurface(vs, unit);
@@ -266,8 +258,6 @@ export const buildBeveledSurface = (
     return m;
   };
 
-  const doSnap = jointSnap.snapSharedEdges || jointSnap.snapSharedCorners;
-
   const evaluator = new Evaluator();
   evaluator.attributes = ["position", "normal"];
   evaluator.useGroups = false;
@@ -277,7 +267,7 @@ export const buildBeveledSurface = (
     let g: THREE.BufferGeometry = new RoundedBoxGeometry(unit, unit, unit, seg, r);
     if ("uv" in g.attributes) g.deleteAttribute("uv");
     g = g.toNonIndexed();
-    if (doSnap) snapInternalJointsToSharpBox(g, neighborMaskFor(v), unit, r, jointSnap);
+    snapInternalJointsToSharpBox(g, neighborMaskFor(v), unit, r);
     g.translate((v.x + 0.5 + o.x) * unit, (v.y + 0.5 + o.y) * unit, (v.z + 0.5 + o.z) * unit);
     const brush = new Brush(g);
     brush.updateMatrixWorld();

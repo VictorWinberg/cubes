@@ -1,15 +1,34 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Viewport } from "@/components/Viewport";
+import { useEffect, useMemo, useState } from "react";
+import { Viewport, type ViewportPiece } from "@/components/Viewport";
 import { Btn, ColorField, Range, Section, Segmented, Toggle } from "@/components/ui-bits";
 import { SHAPES } from "@/geometry/tetrisShapes";
 import { identifyShape, pickRandom, randomGrowth } from "@/geometry/tetrocubeGenerator";
 import { validateShape } from "@/geometry/shapeValidator";
-import { buildBeveledSurface, buildSurface } from "@/geometry/meshBuilder";
-import { applyHoles, checkHoles } from "@/geometry/holeGenerator";
+import { displayOffset } from "@/geometry/meshBuilder";
+import { buildPieceGeometry } from "@/geometry/pieceMesh";
+import { checkHoles } from "@/geometry/holeGenerator";
 import { mirrorShape, normalize, randomOrientation, rotateShape } from "@/utils/shapeRotation";
-import { exportGLB, exportSTL } from "@/utils/exporters";
-import type { Appearance, Axis, HoleSettings, MaterialKind, Voxel } from "@/types/geometry";
+import { exportGLB, exportSTL, mergeTranslatedGeometries } from "@/utils/exporters";
+import {
+  addOffsets,
+  allWorldVoxels,
+  findFreeOffset,
+  nextPieceId,
+  offsetDelta,
+  pieceGroupPosition,
+  wouldOverlap,
+} from "@/scene/placement";
+import { validateScene } from "@/scene/sceneValidator";
+import type {
+  Appearance,
+  AppMode,
+  Axis,
+  HoleSettings,
+  MaterialKind,
+  PlacedPiece,
+  Voxel,
+} from "@/types/geometry";
 
 export const Route = createFileRoute("/")({
   ssr: false,
@@ -19,12 +38,12 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Generate, rotate, edit, drill and export every 3D shape made of four connected cubes.",
+          "Generate, rotate, edit, drill and stack 3D shapes made of four connected cubes.",
       },
       { property: "og:title", content: "Cubes — 3D four-cube shape generator" },
       {
         property: "og:description",
-        content: "Tetris pieces, expanded into three dimensions. Export GLB and STL.",
+        content: "Tetris pieces, expanded into three dimensions. Stack, export GLB and STL.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -40,13 +59,18 @@ const VIEW_COLORS = {
   gridStrong: "#9f9b92",
 };
 
+const PIECE_COLORS = ["#e8622c", "#2c7be8", "#2cb67d", "#c44dff", "#e8b92c", "#e82c6a", "#1d1b18"];
+
 function App() {
   const list = SHAPES;
+  const [mode, setMode] = useState<AppMode>("lab");
   const [index, setIndex] = useState(0);
   const [voxels, setVoxels] = useState<Voxel[]>(SHAPES[0]!.voxels);
   const [frame, setFrame] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
+  const [pieces, setPieces] = useState<PlacedPiece[]>([]);
+  const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
   const [look, setLook] = useState<Appearance>({
     unit: 1,
     color: "#e8622c",
@@ -54,8 +78,6 @@ function App() {
     edges: true,
     bevel: true,
     bevelRadius: 0.1,
-    bevelSnapSharedEdges: true,
-    bevelSnapSharedCorners: true,
     bevelSegments: 5,
     material: "satin",
     light: 1,
@@ -89,38 +111,192 @@ function App() {
   const validation = validateShape(voxels);
   const name = identifyShape(voxels);
   const holeError = validation.valid ? checkHoles(voxels, holes) : null;
+  const sceneValidation = validateScene(pieces);
+  const selectedPiece = pieces.find((p) => p.id === selectedPieceId) ?? null;
 
-  const geometry = useMemo(() => {
-    const surf = look.bevel
-      ? buildBeveledSurface(
-          voxels,
-          look.unit,
-          look.bevelRadius,
-          {
-            snapSharedEdges: look.bevelSnapSharedEdges,
-            snapSharedCorners: look.bevelSnapSharedCorners,
-          },
-          look.bevelSegments,
-        )
-      : buildSurface(voxels, look.unit);
-    if (!validation.valid || !holes.enabled) return surf;
-    try {
-      return applyHoles(surf, voxels, look.unit, holes);
-    } catch (e) {
-      console.error(e);
-      return surf;
+  const labGeometry = useMemo(
+    () => buildPieceGeometry(voxels, look, holes),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      voxels,
+      look.unit,
+      look.bevel,
+      look.bevelRadius,
+      look.bevelSegments,
+      holes,
+      validation.valid,
+    ],
+  );
+
+  const sceneGeometries = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof buildPieceGeometry>>();
+    if (mode !== "scene") return map;
+    for (const p of pieces) {
+      map.set(p.id, buildPieceGeometry(p.voxels, look, holes));
     }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    voxels,
+    mode,
+    pieces,
     look.unit,
     look.bevel,
     look.bevelRadius,
-    look.bevelSnapSharedEdges,
-    look.bevelSnapSharedCorners,
     look.bevelSegments,
     holes,
-    validation.valid,
   ]);
+
+  const worldVoxels = useMemo(
+    () => (mode === "scene" ? allWorldVoxels(pieces) : voxels),
+    [mode, pieces, voxels],
+  );
+
+  const viewportPieces: ViewportPiece[] = useMemo(() => {
+    if (mode === "lab") {
+      return [
+        {
+          id: "lab",
+          voxels,
+          geometry: labGeometry,
+          color: look.color,
+          position: [0, 0, 0],
+        },
+      ];
+    }
+    const sceneOff = displayOffset(worldVoxels);
+    return pieces.map((p) => {
+      const localOff = displayOffset(p.voxels);
+      return {
+        id: p.id,
+        voxels: p.voxels,
+        geometry: sceneGeometries.get(p.id) ?? labGeometry,
+        color: p.color ?? look.color,
+        position: pieceGroupPosition(p, sceneOff, localOff, look.unit),
+        selected: p.id === selectedPieceId,
+      };
+    });
+  }, [
+    mode,
+    voxels,
+    labGeometry,
+    look.color,
+    look.unit,
+    pieces,
+    worldVoxels,
+    sceneGeometries,
+    selectedPieceId,
+  ]);
+
+  const addCurrentToScene = () => {
+    if (!validation.valid) return;
+    const local = normalize(voxels);
+    const offset = findFreeOffset(local, pieces);
+    const piece: PlacedPiece = {
+      id: nextPieceId(),
+      name: name ?? "Custom",
+      voxels: local,
+      offset,
+      color: PIECE_COLORS[pieces.length % PIECE_COLORS.length],
+    };
+    setPieces((ps) => [...ps, piece]);
+    setSelectedPieceId(piece.id);
+    setMode("scene");
+    setEditMode(false);
+    setFrame((f) => f + 1);
+  };
+
+  const addRandomToScene = () => {
+    const i = pickRandom(list, index);
+    const local = normalize(randomOrientation(list[i]!.voxels, true));
+    const offset = findFreeOffset(local, pieces);
+    const piece: PlacedPiece = {
+      id: nextPieceId(),
+      name: list[i]!.name,
+      voxels: local,
+      offset,
+      color: PIECE_COLORS[pieces.length % PIECE_COLORS.length],
+    };
+    setPieces((ps) => [...ps, piece]);
+    setSelectedPieceId(piece.id);
+    setIndex(i);
+    setMode("scene");
+    setEditMode(false);
+    setFrame((f) => f + 1);
+  };
+
+  const moveSelected = (axis: Axis, dir: 1 | -1) => {
+    if (!selectedPiece) return;
+    const nextOffset = addOffsets(selectedPiece.offset, offsetDelta(axis, dir));
+    const others = pieces.filter((p) => p.id !== selectedPiece.id);
+    if (wouldOverlap({ voxels: selectedPiece.voxels, offset: nextOffset }, others)) return;
+    setPieces((ps) =>
+      ps.map((p) => (p.id === selectedPiece.id ? { ...p, offset: nextOffset } : p)),
+    );
+  };
+
+  const rotateSelectedOrLab = (axis: Axis) => {
+    if (mode === "scene" && selectedPiece) {
+      const rotated = normalize(rotateShape(selectedPiece.voxels, axis));
+      const others = pieces.filter((p) => p.id !== selectedPiece.id);
+      if (wouldOverlap({ voxels: rotated, offset: selectedPiece.offset }, others)) return;
+      setPieces((ps) =>
+        ps.map((p) => (p.id === selectedPiece.id ? { ...p, voxels: rotated } : p)),
+      );
+      return;
+    }
+    load(rotateShape(voxels, axis), index, false);
+  };
+
+  const mirrorSelectedOrLab = () => {
+    if (mode === "scene" && selectedPiece) {
+      const mirrored = normalize(mirrorShape(selectedPiece.voxels));
+      const others = pieces.filter((p) => p.id !== selectedPiece.id);
+      if (wouldOverlap({ voxels: mirrored, offset: selectedPiece.offset }, others)) return;
+      setPieces((ps) =>
+        ps.map((p) => (p.id === selectedPiece.id ? { ...p, voxels: mirrored } : p)),
+      );
+      return;
+    }
+    load(mirrorShape(voxels), index, false);
+  };
+
+  useEffect(() => {
+    if (mode !== "scene") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!selectedPieceId) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const map: Record<string, [Axis, 1 | -1]> = {
+        ArrowLeft: ["x", -1],
+        ArrowRight: ["x", 1],
+        ArrowUp: ["z", -1],
+        ArrowDown: ["z", 1],
+        PageUp: ["y", 1],
+        PageDown: ["y", -1],
+        w: ["z", -1],
+        s: ["z", 1],
+        a: ["x", -1],
+        d: ["x", 1],
+        q: ["y", -1],
+        e: ["y", 1],
+      };
+      const step = map[e.key] ?? map[e.key.toLowerCase()];
+      if (!step) return;
+      e.preventDefault();
+      const [axis, dir] = step;
+      // Inline move to avoid stale closure on selectedPiece
+      setPieces((ps) => {
+        const cur = ps.find((p) => p.id === selectedPieceId);
+        if (!cur) return ps;
+        const nextOffset = addOffsets(cur.offset, offsetDelta(axis, dir));
+        const others = ps.filter((p) => p.id !== cur.id);
+        if (wouldOverlap({ voxels: cur.voxels, offset: nextOffset }, others)) return ps;
+        return ps.map((p) => (p.id === cur.id ? { ...p, offset: nextOffset } : p));
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode, selectedPieceId]);
 
   const fileName = `tetrocube-${(name ?? "custom").split(" ")[0]!.replace(/\W/g, "").toLowerCase()}`;
   const mat = { matte: [0, 0.95], satin: [0.05, 0.5], plastic: [0, 0.25], metal: [0.9, 0.3] }[
@@ -128,13 +304,160 @@ function App() {
   ];
   const is3D = ["x", "y", "z"].every((k) => new Set(voxels.map((v) => v[k as Axis])).size > 1);
 
+  const canExport =
+    mode === "lab" ? validation.valid : pieces.length > 0 && sceneValidation.valid;
+
+  const doExportGLB = () => {
+    if (mode === "lab") {
+      void exportGLB(labGeometry, look.color, fileName, mat[0], mat[1]);
+      return;
+    }
+    const merged = mergeTranslatedGeometries(
+      viewportPieces.map((p) => ({ geometry: p.geometry, position: p.position })),
+    );
+    if (!merged) return;
+    void exportGLB(merged, look.color, `scene-${pieces.length}pieces`, mat[0], mat[1]);
+    merged.dispose();
+  };
+
+  const doExportSTL = () => {
+    if (mode === "lab") {
+      exportSTL(labGeometry, fileName);
+      return;
+    }
+    const merged = mergeTranslatedGeometries(
+      viewportPieces.map((p) => ({ geometry: p.geometry, position: p.position })),
+    );
+    if (!merged) return;
+    exportSTL(merged, `scene-${pieces.length}pieces`);
+    merged.dispose();
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground lg:h-screen lg:flex-row lg:overflow-hidden">
-      {/* Sidebar */}
       <aside className="order-2 w-full shrink-0 border-border bg-card lg:order-1 lg:w-80 lg:overflow-y-auto lg:border-r">
         <header className="hidden border-b border-border px-4 py-4 lg:block">
-          <Logo />
+          <Logo mode={mode} />
         </header>
+
+        <Section title="Mode">
+          <Segmented<AppMode>
+            value={mode}
+            onChange={(v) => {
+              setMode(v);
+              setEditMode(false);
+              setSelected(null);
+              setFrame((f) => f + 1);
+            }}
+            options={[
+              { v: "lab", l: "Shape lab" },
+              { v: "scene", l: "Stack scene" },
+            ]}
+          />
+          <p className="text-xs text-muted-foreground">
+            {mode === "lab"
+              ? "Design a single 4-cube piece, then add it to the stack."
+              : "Select a piece and nudge it on the grid. Arrow keys / WASD / QE move."}
+          </p>
+        </Section>
+
+        {mode === "scene" && (
+          <Section title={`Scene · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}`}>
+            <div className="grid grid-cols-2 gap-2">
+              <Btn
+                variant="primary"
+                disabled={!validation.valid}
+                onClick={addCurrentToScene}
+                title="Add the lab shape (current Generate panel) into the scene"
+              >
+                Add current
+              </Btn>
+              <Btn onClick={addRandomToScene}>Add random</Btn>
+              <Btn
+                variant="outline"
+                disabled={!selectedPiece}
+                onClick={() => {
+                  if (!selectedPiece) return;
+                  setPieces((ps) => ps.filter((p) => p.id !== selectedPiece.id));
+                  setSelectedPieceId(null);
+                }}
+              >
+                Remove selected
+              </Btn>
+              <Btn
+                variant="outline"
+                disabled={pieces.length === 0}
+                onClick={() => {
+                  setPieces([]);
+                  setSelectedPieceId(null);
+                  setFrame((f) => f + 1);
+                }}
+              >
+                Clear scene
+              </Btn>
+            </div>
+            {pieces.length > 0 && (
+              <ul className="max-h-40 space-y-1 overflow-y-auto">
+                {pieces.map((p, i) => (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPieceId(p.id)}
+                      className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${
+                        p.id === selectedPieceId
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border hover:bg-accent"
+                      }`}
+                    >
+                      <span
+                        className="h-3 w-3 shrink-0 rounded-sm"
+                        style={{ background: p.color ?? look.color }}
+                      />
+                      <span className="truncate font-semibold">
+                        {i + 1}. {p.name}
+                      </span>
+                      <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+                        {p.offset.x},{p.offset.y},{p.offset.z}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="space-y-2">
+              <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                Move selected (±1)
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(["x", "y", "z"] as Axis[]).map((a) => (
+                  <div key={a} className="flex gap-1">
+                    <Btn
+                      variant="outline"
+                      className="flex-1 px-1"
+                      disabled={!selectedPiece}
+                      onClick={() => moveSelected(a, -1)}
+                    >
+                      −{a.toUpperCase()}
+                    </Btn>
+                    <Btn
+                      variant="outline"
+                      className="flex-1 px-1"
+                      disabled={!selectedPiece}
+                      onClick={() => moveSelected(a, 1)}
+                    >
+                      +{a.toUpperCase()}
+                    </Btn>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {!sceneValidation.valid && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {sceneValidation.errors[0]}
+              </p>
+            )}
+          </Section>
+        )}
 
         <Section title="Generate">
           <Btn
@@ -179,50 +502,53 @@ function App() {
         <Section title="Rotate & mirror">
           <div className="grid grid-cols-4 gap-2">
             {(["x", "y", "z"] as Axis[]).map((a) => (
-              <Btn
-                key={a}
-                variant="outline"
-                onClick={() => load(rotateShape(voxels, a), index, false)}
-              >
+              <Btn key={a} variant="outline" onClick={() => rotateSelectedOrLab(a)}>
                 ⟳ {a.toUpperCase()}
               </Btn>
             ))}
-            <Btn variant="outline" onClick={() => load(mirrorShape(voxels), index, false)}>
+            <Btn variant="outline" onClick={mirrorSelectedOrLab}>
               Mirror
             </Btn>
           </div>
-        </Section>
-
-        <Section title="Edit cubes">
-          <Toggle
-            label="Edit mode"
-            checked={editMode}
-            onChange={(v) => {
-              setEditMode(v);
-              setSelected(null);
-            }}
-          />
-          {editMode && (
+          {mode === "scene" && (
             <p className="text-xs text-muted-foreground">
-              Tap a cube to select it. Tap a faint ghost cube to add one in that free spot.
+              Applies to the selected scene piece (blocked if it would overlap).
             </p>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <Btn
-              variant="outline"
-              disabled={selected === null}
-              onClick={() => {
-                setVoxels(voxels.filter((_, i) => i !== selected));
+        </Section>
+
+        {mode === "lab" && (
+          <Section title="Edit cubes">
+            <Toggle
+              label="Edit mode"
+              checked={editMode}
+              onChange={(v) => {
+                setEditMode(v);
                 setSelected(null);
               }}
-            >
-              Remove selected
-            </Btn>
-            <Btn variant="outline" onClick={() => load(list[index % list.length]!.voxels, index)}>
-              Reset to valid
-            </Btn>
-          </div>
-        </Section>
+            />
+            {editMode && (
+              <p className="text-xs text-muted-foreground">
+                Tap a cube to select it. Tap a faint ghost cube to add one in that free spot.
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <Btn
+                variant="outline"
+                disabled={selected === null}
+                onClick={() => {
+                  setVoxels(voxels.filter((_, i) => i !== selected));
+                  setSelected(null);
+                }}
+              >
+                Remove selected
+              </Btn>
+              <Btn variant="outline" onClick={() => load(list[index % list.length]!.voxels, index)}>
+                Reset to valid
+              </Btn>
+            </div>
+          </Section>
+        )}
 
         <Section title="Holes">
           <Toggle label="Drill holes" checked={holes.enabled} onChange={(v) => H("enabled", v)} />
@@ -289,7 +615,7 @@ function App() {
                       : `${Math.round(v * 100)}% inward`
                 }
               />
-              {holeError && (
+              {holeError && mode === "lab" && (
                 <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
                   {holeError}
                 </p>
@@ -308,7 +634,11 @@ function App() {
             onChange={(v) => L("unit", v)}
             fmt={(v) => `${v.toFixed(1)} units`}
           />
-          <ColorField label="Shape color" value={look.color} onChange={(v) => L("color", v)} />
+          <ColorField
+            label={mode === "scene" ? "Default / export color" : "Shape color"}
+            value={look.color}
+            onChange={(v) => L("color", v)}
+          />
           <ColorField
             label="Cube edge color"
             value={look.edgeColor}
@@ -318,26 +648,6 @@ function App() {
           <Toggle label="Bevel edges" checked={look.bevel} onChange={(v) => L("bevel", v)} />
           {look.bevel && (
             <>
-              <div className="text-sm">
-                <div className="mb-1.5 flex justify-between">
-                  <span>Bevel at voxel joints (snap before union)</span>
-                  <span className="font-mono text-xs text-muted-foreground">CSG</span>
-                </div>
-                <Toggle
-                  label="Snap shared edges"
-                  checked={look.bevelSnapSharedEdges}
-                  onChange={(v) => L("bevelSnapSharedEdges", v)}
-                />
-                <Toggle
-                  label="Snap shared corners"
-                  checked={look.bevelSnapSharedCorners}
-                  onChange={(v) => L("bevelSnapSharedCorners", v)}
-                />
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  When either is on, shared face caps are flattened too. Both off = full per-cube
-                  rounding between cubes.
-                </p>
-              </div>
               <Range
                 label="Bevel segments"
                 value={look.bevelSegments}
@@ -380,31 +690,37 @@ function App() {
         </Section>
       </aside>
 
-      {/* Main */}
       <main className="order-1 flex min-w-0 flex-1 flex-col lg:order-2">
         <div className="flex items-center justify-between border-b border-border bg-card px-4 py-3 lg:hidden">
-          <Logo />
+          <Logo mode={mode} />
         </div>
         <div className="viewport-bg relative h-[58vh] lg:h-auto lg:flex-1">
           <Viewport
-            voxels={voxels}
-            geometry={geometry}
+            frameVoxels={worldVoxels}
+            pieces={viewportPieces}
             look={look}
-            frameKey={`${frame}`}
-            editMode={editMode}
-            selected={selected}
-            onSelect={setSelected}
-            onAdd={(v) => setVoxels([...voxels, v])}
+            frameKey={`${frame}-${mode}-${pieces.length}`}
+            editMode={mode === "lab" && editMode}
+            selectedVoxel={selected}
+            onSelectVoxel={setSelected}
+            onAddVoxel={(v) => setVoxels([...voxels, v])}
+            onSelectPiece={mode === "scene" ? setSelectedPieceId : undefined}
             colors={VIEW_COLORS}
           />
           <div className="pointer-events-none absolute left-3 top-3 space-y-1.5">
             <div className="rounded-md bg-card/90 px-3 py-2 shadow-sm backdrop-blur">
               <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                Shape
+                {mode === "scene" ? "Scene" : "Shape"}
               </div>
               <div className="text-lg font-semibold leading-tight">
-                {name ?? "Custom"}
-                {is3D && validation.valid && (
+                {mode === "scene"
+                  ? selectedPiece
+                    ? selectedPiece.name
+                    : pieces.length
+                      ? `${pieces.length} pieces`
+                      : "Empty"
+                  : (name ?? "Custom")}
+                {mode === "lab" && is3D && validation.valid && (
                   <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 align-middle text-[10px] font-bold text-primary">
                     3D
                   </span>
@@ -412,19 +728,45 @@ function App() {
               </div>
             </div>
             <div
-              className={`rounded-md px-3 py-1.5 text-xs font-medium shadow-sm ${validation.valid ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive"}`}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium shadow-sm ${
+                (mode === "lab" ? validation.valid : sceneValidation.valid)
+                  ? "bg-success/15 text-success"
+                  : "bg-destructive/15 text-destructive"
+              }`}
             >
-              {validation.valid ? "✓ Valid — 4 connected cubes" : validation.errors.join(" ")}
+              {mode === "lab"
+                ? validation.valid
+                  ? "✓ Valid — 4 connected cubes"
+                  : validation.errors.join(" ")
+                : pieces.length === 0
+                  ? "Add pieces to start stacking"
+                  : sceneValidation.valid
+                    ? `✓ ${pieces.length} piece${pieces.length === 1 ? "" : "s"} — no overlaps`
+                    : sceneValidation.errors[0]}
             </div>
           </div>
         </div>
         <footer className="flex flex-wrap items-center gap-2 border-t border-border bg-card px-3 py-2.5">
           <span className="font-mono text-xs text-muted-foreground">
-            Cubes{" "}
-            <b className={voxels.length === 4 ? "text-foreground" : "text-destructive"}>
-              {voxels.length}/4
-            </b>{" "}
-            · {name ?? "custom"}
+            {mode === "lab" ? (
+              <>
+                Cubes{" "}
+                <b className={voxels.length === 4 ? "text-foreground" : "text-destructive"}>
+                  {voxels.length}/4
+                </b>{" "}
+                · {name ?? "custom"}
+              </>
+            ) : (
+              <>
+                Pieces <b className="text-foreground">{pieces.length}</b>
+                {selectedPiece && (
+                  <>
+                    {" "}
+                    · sel {selectedPiece.offset.x},{selectedPiece.offset.y},{selectedPiece.offset.z}
+                  </>
+                )}
+              </>
+            )}
           </span>
           <div className="ml-auto flex flex-wrap gap-2">
             <Btn onClick={() => setFrame((f) => f + 1)}>Reset camera</Btn>
@@ -434,19 +776,11 @@ function App() {
             <Btn active={look.grid} onClick={() => L("grid", !look.grid)}>
               Grid
             </Btn>
-            <Btn
-              variant="primary"
-              disabled={!validation.valid}
-              onClick={() => exportGLB(geometry, look.color, fileName, mat[0], mat[1])}
-            >
-              Export GLB
+            <Btn variant="primary" disabled={!canExport} onClick={doExportGLB}>
+              {mode === "scene" ? "Export scene GLB" : "Export GLB"}
             </Btn>
-            <Btn
-              variant="primary"
-              disabled={!validation.valid}
-              onClick={() => exportSTL(geometry, fileName)}
-            >
-              Export STL
+            <Btn variant="primary" disabled={!canExport} onClick={doExportSTL}>
+              {mode === "scene" ? "Export scene STL" : "Export STL"}
             </Btn>
           </div>
         </footer>
@@ -455,7 +789,7 @@ function App() {
   );
 }
 
-function Logo() {
+function Logo({ mode }: { mode: AppMode }) {
   return (
     <div className="flex items-center gap-2.5">
       <div className="grid h-7 w-7 grid-cols-2 gap-0.5">
@@ -467,7 +801,7 @@ function Logo() {
       <div>
         <div className="font-display text-base font-bold leading-none tracking-tight">Cubes</div>
         <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-          4-cube shape lab
+          {mode === "scene" ? "stack puzzle" : "4-cube shape lab"}
         </div>
       </div>
     </div>
