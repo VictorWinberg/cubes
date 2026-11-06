@@ -36,6 +36,8 @@ export interface Appearance {
 export interface HoleSettings {
   enabled: boolean;
   size: number; // fraction of unit size
+  /** When true, subtract small spheres at exterior openings for a rounded rim. */
+  rimSphere: boolean;
   /**
    * Rim scoop sphere radius as a fraction of the unit cube edge (world radius = this × `unit`).
    */

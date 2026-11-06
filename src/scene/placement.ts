@@ -48,6 +48,16 @@ export const addOffsets = (a: Voxel, b: Voxel): Voxel => ({
   z: a.z + b.z,
 });
 
+/** Minimum world Y among voxels of `piece` (normalized local + offset). */
+export const minWorldY = (piece: Pick<PlacedPiece, "voxels" | "offset">): number =>
+  toWorldVoxels(piece).reduce((m, v) => Math.min(m, v.y), Number.POSITIVE_INFINITY);
+
+export const FLOOR_WORLD_Y = 0;
+
+/** True if any world cell of `piece` would have y < FLOOR_WORLD_Y (after normalize + offset). */
+export const violatesFloor = (piece: Pick<PlacedPiece, "voxels" | "offset">): boolean =>
+  minWorldY(piece) < FLOOR_WORLD_Y;
+
 /**
  * Find a grid offset for `voxels` that does not overlap existing pieces.
  * Searches along +X then +Y (stack) in a small set of candidates.
@@ -78,6 +88,53 @@ export const findFreeOffset = (voxels: Voxel[], existing: PlacedPiece[]): Voxel 
     if (!wouldOverlap({ voxels: local, offset }, existing)) return offset;
   }
   return { x: maxX + 4, y: 0, z: 0 };
+};
+
+/**
+ * Tetris-style spawn: piece appears above the stack (high Y), centered over the scene footprint on XZ.
+ * `localVoxels` should already be normalized; max local Y is used so the bottom sits one cell above the current top.
+ */
+export const findSpawnOffsetTop = (localVoxels: Voxel[], existing: PlacedPiece[]): Voxel => {
+  const local = normalize(localVoxels);
+
+  if (existing.length === 0) {
+    return { x: 0, y: 0, z: 0 };
+  }
+
+  const world = allWorldVoxels(existing);
+  const minX = Math.min(...world.map((v) => v.x));
+  const maxX = Math.max(...world.map((v) => v.x));
+  const minZ = Math.min(...world.map((v) => v.z));
+  const maxZ = Math.max(...world.map((v) => v.z));
+  const topY = Math.max(...world.map((v) => v.y));
+
+  const footprintW = maxX - minX + 1;
+  const footprintD = maxZ - minZ + 1;
+  const cx = minX + (footprintW - 1) / 2;
+  const cz = minZ + (footprintD - 1) / 2;
+  /** Bottom of new piece (world min Y = offset.y) must sit on y ≥ 0; lowest cube sits one cell above current top. */
+  const spawnY = topY + 1;
+
+  let ox = Math.round(cx);
+  let oz = Math.round(cz);
+
+  const tryOffset = (offset: Voxel): boolean =>
+    !wouldOverlap({ voxels: local, offset }, existing);
+
+  if (tryOffset({ x: ox, y: spawnY, z: oz })) return { x: ox, y: spawnY, z: oz };
+
+  const maxR = Math.max(footprintW, footprintD, 4) + 8;
+  for (let r = 0; r <= maxR; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        if (r > 0 && Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+        const o = { x: ox + dx, y: spawnY, z: oz + dz };
+        if (tryOffset(o)) return o;
+      }
+    }
+  }
+
+  return { x: ox, y: spawnY, z: oz };
 };
 
 let pieceSeq = 0;

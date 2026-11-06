@@ -27,6 +27,8 @@ export interface ViewportPiece {
 interface Props {
   /** Voxels used for camera framing and grid height (world cells in scene mode). */
   frameVoxels: Voxel[];
+  /** Stack scene: world Y (after scene display offset) for the top of the floor slab; omit in lab. */
+  floorPlaneY?: number;
   pieces: ViewportPiece[];
   look: Appearance;
   frameKey: string;
@@ -34,7 +36,7 @@ interface Props {
   selectedVoxel: number | null;
   onSelectVoxel: (i: number | null) => void;
   onAddVoxel: (v: Voxel) => void;
-  onSelectPiece?: (id: string | null) => void;
+  onSelectPiece?: ((id: string | null) => void) | undefined;
   colors: { selection: string; ghost: string; grid: string; gridStrong: string };
 }
 
@@ -83,7 +85,7 @@ function PieceMesh({
   selectedVoxel: number | null;
   onSelectVoxel: (i: number | null) => void;
   onAddVoxel: (v: Voxel) => void;
-  onSelectPiece?: (id: string | null) => void;
+  onSelectPiece?: ((id: string | null) => void) | undefined;
   colors: Props["colors"];
 }) {
   const u = look.unit;
@@ -160,10 +162,14 @@ function PieceMesh({
           }}
           onPointerOver={(e) => {
             e.stopPropagation();
-            (e.object as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>).material.opacity = 0.4;
+            (
+              e.object as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
+            ).material.opacity = 0.4;
           }}
           onPointerOut={(e) => {
-            (e.object as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>).material.opacity = 0.1;
+            (
+              e.object as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
+            ).material.opacity = 0.1;
           }}
         >
           <boxGeometry args={[u * 0.9, u * 0.9, u * 0.9]} />
@@ -176,6 +182,7 @@ function PieceMesh({
 
 export function Viewport({
   frameVoxels,
+  floorPlaneY,
   pieces,
   look,
   frameKey,
@@ -188,6 +195,7 @@ export function Viewport({
 }: Props) {
   const u = look.unit;
   const sceneOff = displayOffset(frameVoxels);
+  const floorY = floorPlaneY ?? -0.5 * u;
 
   return (
     <Canvas
@@ -238,7 +246,7 @@ export function Viewport({
 
       {look.grid && (
         <Grid
-          position={[0, -0.002, 0]}
+          position={[sceneOff.x * u, floorY - 0.002, sceneOff.z * u]}
           infiniteGrid
           cellSize={u}
           sectionSize={u * 4}
@@ -248,6 +256,19 @@ export function Viewport({
           cellThickness={0.6}
           sectionThickness={1}
         />
+      )}
+      {floorPlaneY !== undefined && (
+        <mesh rotation-x={-Math.PI / 2} position={[sceneOff.x * u, floorY, sceneOff.z * u]}>
+          <planeGeometry args={[u * 80, u * 80]} />
+          <meshStandardMaterial
+            color={colors.grid}
+            transparent
+            opacity={0.35}
+            roughness={0.95}
+            metalness={0}
+            depthWrite={false}
+          />
+        </mesh>
       )}
       <axesHelper
         args={[u * 0.8]}

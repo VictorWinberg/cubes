@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Viewport, type ViewportPiece } from "@/components/Viewport";
 import { Btn, ColorField, Range, Section, Segmented, Toggle } from "@/components/ui-bits";
 import { SHAPES } from "@/geometry/tetrisShapes";
@@ -8,15 +8,22 @@ import { validateShape } from "@/geometry/shapeValidator";
 import { displayOffset } from "@/geometry/meshBuilder";
 import { buildPieceGeometry } from "@/geometry/pieceMesh";
 import { checkHoles } from "@/geometry/holeGenerator";
-import { mirrorShape, normalize, randomOrientation, rotateShape } from "@/utils/shapeRotation";
+import {
+  mirrorShape,
+  normalize,
+  randomOrientation,
+  rotateShape,
+  rotateShapeCCW,
+} from "@/utils/shapeRotation";
 import { exportGLB, exportSTL, mergeTranslatedGeometries } from "@/utils/exporters";
 import {
   addOffsets,
   allWorldVoxels,
-  findFreeOffset,
+  findSpawnOffsetTop,
   nextPieceId,
   offsetDelta,
   pieceGroupPosition,
+  violatesFloor,
   wouldOverlap,
 } from "@/scene/placement";
 import { validateScene } from "@/scene/sceneValidator";
@@ -37,8 +44,7 @@ export const Route = createFileRoute("/")({
       { title: "Cubes — 3D four-cube shape generator" },
       {
         name: "description",
-        content:
-          "Generate, rotate, edit, drill and stack 3D shapes made of four connected cubes.",
+        content: "Generate, rotate, edit, drill and stack 3D shapes made of four connected cubes.",
       },
       { property: "og:title", content: "Cubes — 3D four-cube shape generator" },
       {
@@ -61,6 +67,33 @@ const VIEW_COLORS = {
 
 const PIECE_COLORS = ["#e8622c", "#2c7be8", "#2cb67d", "#c44dff", "#e8b92c", "#e82c6a", "#1d1b18"];
 
+const defaultLabLook = (): Appearance => ({
+  unit: 1,
+  color: "#e8622c",
+  edgeColor: "#1d1b18",
+  edges: true,
+  bevel: true,
+  bevelRadius: 0.1,
+  bevelSegments: 5,
+  material: "satin",
+  light: 1,
+  wireframe: false,
+  grid: true,
+});
+
+const defaultLabHoles = (): HoleSettings => ({
+  enabled: true,
+  size: 0.5,
+  rimSphere: true,
+  rimRadius: 0.5,
+  rimOffset: 0.37,
+  axes: ["x", "y", "z"],
+});
+
+/** Stack scene: sharp cubes, no drill (lab can still use bevel + holes). */
+const sceneLookFrom = (prev: Appearance): Appearance => ({ ...prev, bevel: false });
+const sceneHolesFrom = (prev: HoleSettings): HoleSettings => ({ ...prev, enabled: false });
+
 function App() {
   const list = SHAPES;
   const [mode, setMode] = useState<AppMode>("lab");
@@ -71,31 +104,65 @@ function App() {
   const [selected, setSelected] = useState<number | null>(null);
   const [pieces, setPieces] = useState<PlacedPiece[]>([]);
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
-  const [look, setLook] = useState<Appearance>({
-    unit: 1,
-    color: "#e8622c",
-    edgeColor: "#1d1b18",
-    edges: true,
-    bevel: true,
-    bevelRadius: 0.1,
-    bevelSegments: 5,
-    material: "satin",
-    light: 1,
-    wireframe: false,
-    grid: true,
-  });
-  const [holes, setHoles] = useState<HoleSettings>({
-    enabled: true,
-    size: 0.5,
-    rimRadius: 0.5,
-    rimOffset: 0.37,
-    axes: ["x", "y", "z"],
-  });
+  const [look, setLook] = useState<Appearance>(defaultLabLook);
+  const [holes, setHoles] = useState<HoleSettings>(defaultLabHoles);
+
+  const labLookSnap = useRef<Appearance | null>(null);
+  const labHolesSnap = useRef<HoleSettings | null>(null);
+  const sceneLookSnap = useRef<Appearance | null>(null);
+  const sceneHolesSnap = useRef<HoleSettings | null>(null);
+  /** Fresh id for scene keyboard (rotate / move) without stale closures. */
+  const selectedPieceIdRef = useRef<string | null>(null);
+  /** Enter: random shape + orientation (same as Add random). */
+  const addRandomToSceneRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    selectedPieceIdRef.current = selectedPieceId;
+  }, [selectedPieceId]);
+
+  const switchMode = (next: AppMode) => {
+    if (mode === next) return;
+    if (mode === "lab" && next === "scene") {
+      labLookSnap.current = look;
+      labHolesSnap.current = holes;
+      if (sceneLookSnap.current && sceneHolesSnap.current) {
+        setLook(sceneLookSnap.current);
+        setHoles(sceneHolesSnap.current);
+      } else {
+        setLook((s) => {
+          const nl = sceneLookFrom(s);
+          sceneLookSnap.current = nl;
+          return nl;
+        });
+        setHoles((h) => {
+          const nh = sceneHolesFrom(h);
+          sceneHolesSnap.current = nh;
+          return nh;
+        });
+      }
+    } else if (mode === "scene" && next === "lab") {
+      sceneLookSnap.current = look;
+      sceneHolesSnap.current = holes;
+      setLook(labLookSnap.current ?? defaultLabLook());
+      setHoles(labHolesSnap.current ?? defaultLabHoles());
+    }
+    setMode(next);
+  };
 
   const L = <K extends keyof Appearance>(k: K, v: Appearance[K]) =>
-    setLook((s) => ({ ...s, [k]: v }));
+    setLook((s) => {
+      const next = { ...s, [k]: v };
+      if (mode === "lab") labLookSnap.current = next;
+      else sceneLookSnap.current = next;
+      return next;
+    });
   const H = <K extends keyof HoleSettings>(k: K, v: HoleSettings[K]) =>
-    setHoles((s) => ({ ...s, [k]: v }));
+    setHoles((h) => {
+      const next = { ...h, [k]: v };
+      if (mode === "lab") labHolesSnap.current = next;
+      else sceneHolesSnap.current = next;
+      return next;
+    });
 
   const load = (vs: Voxel[], i = index, reframe = true) => {
     setVoxels(normalize(vs));
@@ -117,15 +184,7 @@ function App() {
   const labGeometry = useMemo(
     () => buildPieceGeometry(voxels, look, holes),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      voxels,
-      look.unit,
-      look.bevel,
-      look.bevelRadius,
-      look.bevelSegments,
-      holes,
-      validation.valid,
-    ],
+    [voxels, look.unit, look.bevel, look.bevelRadius, look.bevelSegments, holes, validation.valid],
   );
 
   const sceneGeometries = useMemo(() => {
@@ -136,20 +195,19 @@ function App() {
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    mode,
-    pieces,
-    look.unit,
-    look.bevel,
-    look.bevelRadius,
-    look.bevelSegments,
-    holes,
-  ]);
+  }, [mode, pieces, look.unit, look.bevel, look.bevelRadius, look.bevelSegments, holes]);
 
   const worldVoxels = useMemo(
     () => (mode === "scene" ? allWorldVoxels(pieces) : voxels),
     [mode, pieces, voxels],
   );
+
+  /** World grid y=0 plane in Three.js units (top of floor voxels), for a visible slab in stack scene. */
+  const floorPlaneY = useMemo(() => {
+    if (mode !== "scene") return undefined;
+    if (worldVoxels.length === 0) return 0;
+    return -displayOffset(worldVoxels).y * look.unit;
+  }, [mode, worldVoxels, look.unit]);
 
   const viewportPieces: ViewportPiece[] = useMemo(() => {
     if (mode === "lab") {
@@ -190,17 +248,20 @@ function App() {
   const addCurrentToScene = () => {
     if (!validation.valid) return;
     const local = normalize(voxels);
-    const offset = findFreeOffset(local, pieces);
-    const piece: PlacedPiece = {
-      id: nextPieceId(),
-      name: name ?? "Custom",
-      voxels: local,
-      offset,
-      color: PIECE_COLORS[pieces.length % PIECE_COLORS.length],
-    };
-    setPieces((ps) => [...ps, piece]);
-    setSelectedPieceId(piece.id);
-    setMode("scene");
+    const id = nextPieceId();
+    setPieces((ps) => {
+      const offset = findSpawnOffsetTop(local, ps);
+      const piece: PlacedPiece = {
+        id,
+        name: name ?? "Custom",
+        voxels: local,
+        offset,
+        color: PIECE_COLORS[ps.length % PIECE_COLORS.length]!,
+      };
+      return [...ps, piece];
+    });
+    setSelectedPieceId(id);
+    switchMode("scene");
     setEditMode(false);
     setFrame((f) => f + 1);
   };
@@ -208,40 +269,99 @@ function App() {
   const addRandomToScene = () => {
     const i = pickRandom(list, index);
     const local = normalize(randomOrientation(list[i]!.voxels, true));
-    const offset = findFreeOffset(local, pieces);
-    const piece: PlacedPiece = {
-      id: nextPieceId(),
-      name: list[i]!.name,
-      voxels: local,
-      offset,
-      color: PIECE_COLORS[pieces.length % PIECE_COLORS.length],
-    };
-    setPieces((ps) => [...ps, piece]);
-    setSelectedPieceId(piece.id);
+    const id = nextPieceId();
     setIndex(i);
-    setMode("scene");
+    setPieces((ps) => {
+      const offset = findSpawnOffsetTop(local, ps);
+      const piece: PlacedPiece = {
+        id,
+        name: list[i]!.name,
+        voxels: local,
+        offset,
+        color: PIECE_COLORS[ps.length % PIECE_COLORS.length]!,
+      };
+      return [...ps, piece];
+    });
+    setSelectedPieceId(id);
+    switchMode("scene");
     setEditMode(false);
     setFrame((f) => f + 1);
   };
+
+  addRandomToSceneRef.current = addRandomToScene;
+
+  /**
+   * New random piece spawns above the stack (same as Add random).
+   * If a piece is selected: replaces it (keeps its color). If none selected: appends another piece at the top.
+   */
+  const nextRandomPieceInScene = useCallback(() => {
+    const i = pickRandom(list, index);
+    const local = normalize(randomOrientation(list[i]!.voxels, true));
+    const id = nextPieceId();
+    setIndex(i);
+    setPieces((ps) => {
+      const sel = selectedPieceId ? ps.find((p) => p.id === selectedPieceId) : undefined;
+      const rest = selectedPieceId ? ps.filter((p) => p.id !== selectedPieceId) : ps;
+      const offset = findSpawnOffsetTop(local, rest);
+      const piece: PlacedPiece = {
+        id,
+        name: list[i]!.name,
+        voxels: local,
+        offset,
+        color: sel?.color ?? PIECE_COLORS[rest.length % PIECE_COLORS.length]!,
+      };
+      return [...rest, piece];
+    });
+    setSelectedPieceId(id);
+    setFrame((f) => f + 1);
+  }, [list, index, selectedPieceId]);
 
   const moveSelected = (axis: Axis, dir: 1 | -1) => {
     if (!selectedPiece) return;
     const nextOffset = addOffsets(selectedPiece.offset, offsetDelta(axis, dir));
     const others = pieces.filter((p) => p.id !== selectedPiece.id);
-    if (wouldOverlap({ voxels: selectedPiece.voxels, offset: nextOffset }, others)) return;
+    const candidate = { voxels: selectedPiece.voxels, offset: nextOffset };
+    if (violatesFloor(candidate)) return;
+    if (wouldOverlap(candidate, others)) return;
     setPieces((ps) =>
       ps.map((p) => (p.id === selectedPiece.id ? { ...p, offset: nextOffset } : p)),
     );
   };
 
+  const rotateSelectedPieceAxis = (axis: Axis, direction: 1 | -1 = 1) => {
+    const id = selectedPieceIdRef.current;
+    if (!id) return;
+    setPieces((ps) => {
+      const cur = ps.find((p) => p.id === id);
+      if (!cur) return ps;
+      const rotated =
+        direction === 1 ? rotateShape(cur.voxels, axis) : rotateShapeCCW(cur.voxels, axis);
+      const others = ps.filter((p) => p.id !== id);
+      const candidate = { voxels: rotated, offset: cur.offset };
+      if (violatesFloor(candidate)) return ps;
+      if (wouldOverlap(candidate, others)) return ps;
+      return ps.map((p) => (p.id === id ? { ...p, voxels: rotated } : p));
+    });
+  };
+
+  const mirrorSelectedPiece = () => {
+    const id = selectedPieceIdRef.current;
+    if (!id) return;
+    setPieces((ps) => {
+      const cur = ps.find((p) => p.id === id);
+      if (!cur) return ps;
+      const mirrored = normalize(mirrorShape(cur.voxels));
+      const others = ps.filter((p) => p.id !== id);
+      const candidate = { voxels: mirrored, offset: cur.offset };
+      if (violatesFloor(candidate)) return ps;
+      if (wouldOverlap(candidate, others)) return ps;
+      return ps.map((p) => (p.id === id ? { ...p, voxels: mirrored } : p));
+    });
+  };
+
   const rotateSelectedOrLab = (axis: Axis) => {
     if (mode === "scene" && selectedPiece) {
-      const rotated = normalize(rotateShape(selectedPiece.voxels, axis));
-      const others = pieces.filter((p) => p.id !== selectedPiece.id);
-      if (wouldOverlap({ voxels: rotated, offset: selectedPiece.offset }, others)) return;
-      setPieces((ps) =>
-        ps.map((p) => (p.id === selectedPiece.id ? { ...p, voxels: rotated } : p)),
-      );
+      rotateSelectedPieceAxis(axis);
       return;
     }
     load(rotateShape(voxels, axis), index, false);
@@ -249,54 +369,105 @@ function App() {
 
   const mirrorSelectedOrLab = () => {
     if (mode === "scene" && selectedPiece) {
-      const mirrored = normalize(mirrorShape(selectedPiece.voxels));
-      const others = pieces.filter((p) => p.id !== selectedPiece.id);
-      if (wouldOverlap({ voxels: mirrored, offset: selectedPiece.offset }, others)) return;
-      setPieces((ps) =>
-        ps.map((p) => (p.id === selectedPiece.id ? { ...p, voxels: mirrored } : p)),
-      );
+      mirrorSelectedPiece();
       return;
     }
     load(mirrorShape(voxels), index, false);
   };
 
   useEffect(() => {
-    if (mode !== "scene") return;
     const onKey = (e: KeyboardEvent) => {
-      if (!selectedPieceId) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      const map: Record<string, [Axis, 1 | -1]> = {
-        ArrowLeft: ["x", -1],
-        ArrowRight: ["x", 1],
-        ArrowUp: ["z", -1],
-        ArrowDown: ["z", 1],
-        PageUp: ["y", 1],
-        PageDown: ["y", -1],
+      if (e.key === "Enter" && !e.repeat) {
+        e.preventDefault();
+        addRandomToSceneRef.current();
+        return;
+      }
+      if (mode !== "scene") return;
+      if (e.key === " " && !e.repeat) {
+        const id = selectedPieceIdRef.current;
+        if (!id) return;
+        e.preventDefault();
+        setPieces((ps) => {
+          const cur = ps.find((p) => p.id === id);
+          if (!cur) return ps;
+          const nextOffset = addOffsets(cur.offset, offsetDelta("y", -1));
+          const others = ps.filter((p) => p.id !== cur.id);
+          const candidate = { voxels: cur.voxels, offset: nextOffset };
+          if (violatesFloor(candidate)) return ps;
+          if (wouldOverlap(candidate, others)) return ps;
+          return ps.map((p) => (p.id === cur.id ? { ...p, offset: nextOffset } : p));
+        });
+        return;
+      }
+      if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        nextRandomPieceInScene();
+        return;
+      }
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const axisByDigit: Record<string, Axis> = { "1": "x", "2": "y", "3": "z" };
+      const rotAxis: Axis | null =
+        axisByDigit[k] ?? (k === "x" || k === "y" || k === "z" ? (k as Axis) : null);
+      if (rotAxis) {
+        if (!selectedPieceIdRef.current) return;
+        e.preventDefault();
+        rotateSelectedPieceAxis(rotAxis);
+        return;
+      }
+      if (k === "f") {
+        if (!selectedPieceIdRef.current) return;
+        e.preventDefault();
+        mirrorSelectedPiece();
+        return;
+      }
+      const id = selectedPieceIdRef.current;
+      if (!id) return;
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        rotateSelectedPieceAxis("x", -1);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        rotateSelectedPieceAxis("x");
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        rotateSelectedPieceAxis("y", -1);
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        rotateSelectedPieceAxis("y");
+        return;
+      }
+      const wasd: Record<string, [Axis, 1 | -1]> = {
         w: ["z", -1],
         s: ["z", 1],
         a: ["x", -1],
         d: ["x", 1],
-        q: ["y", -1],
-        e: ["y", 1],
       };
-      const step = map[e.key] ?? map[e.key.toLowerCase()];
+      const step = wasd[k];
       if (!step) return;
       e.preventDefault();
       const [axis, dir] = step;
-      // Inline move to avoid stale closure on selectedPiece
       setPieces((ps) => {
-        const cur = ps.find((p) => p.id === selectedPieceId);
+        const cur = ps.find((p) => p.id === id);
         if (!cur) return ps;
         const nextOffset = addOffsets(cur.offset, offsetDelta(axis, dir));
         const others = ps.filter((p) => p.id !== cur.id);
-        if (wouldOverlap({ voxels: cur.voxels, offset: nextOffset }, others)) return ps;
+        const candidate = { voxels: cur.voxels, offset: nextOffset };
+        if (violatesFloor(candidate)) return ps;
+        if (wouldOverlap(candidate, others)) return ps;
         return ps.map((p) => (p.id === cur.id ? { ...p, offset: nextOffset } : p));
       });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mode, selectedPieceId]);
+  }, [mode, nextRandomPieceInScene]);
 
   const fileName = `tetrocube-${(name ?? "custom").split(" ")[0]!.replace(/\W/g, "").toLowerCase()}`;
   const mat = { matte: [0, 0.95], satin: [0.05, 0.5], plastic: [0, 0.25], metal: [0.9, 0.3] }[
@@ -304,8 +475,7 @@ function App() {
   ];
   const is3D = ["x", "y", "z"].every((k) => new Set(voxels.map((v) => v[k as Axis])).size > 1);
 
-  const canExport =
-    mode === "lab" ? validation.valid : pieces.length > 0 && sceneValidation.valid;
+  const canExport = mode === "lab" ? validation.valid : pieces.length > 0 && sceneValidation.valid;
 
   const doExportGLB = () => {
     if (mode === "lab") {
@@ -344,7 +514,7 @@ function App() {
           <Segmented<AppMode>
             value={mode}
             onChange={(v) => {
-              setMode(v);
+              switchMode(v);
               setEditMode(false);
               setSelected(null);
               setFrame((f) => f + 1);
@@ -357,7 +527,7 @@ function App() {
           <p className="text-xs text-muted-foreground">
             {mode === "lab"
               ? "Design a single 4-cube piece, then add it to the stack."
-              : "Select a piece and nudge it on the grid. Arrow keys / WASD / QE move."}
+              : "WASD = XZ, Space = down (Y−). Arrows = rotate (↑↓ X, ←→ Y). 1/2/3 or X/Y/Z rotate, F flip, N next, Enter = new piece. Floor y ≥ 0."}
           </p>
         </Section>
 
@@ -368,11 +538,24 @@ function App() {
                 variant="primary"
                 disabled={!validation.valid}
                 onClick={addCurrentToScene}
-                title="Add the lab shape (current Generate panel) into the scene"
+                title="Drop the current lab shape from above the stack"
               >
                 Add current
               </Btn>
-              <Btn onClick={addRandomToScene}>Add random</Btn>
+              <Btn
+                onClick={addRandomToScene}
+                title="Random catalog shape and orientation from above (Enter)"
+              >
+                Add random
+              </Btn>
+              <Btn
+                variant="outline"
+                className="col-span-2"
+                onClick={nextRandomPieceInScene}
+                title="Random piece at the top; replaces selected piece if any"
+              >
+                Next piece (N)
+              </Btn>
               <Btn
                 variant="outline"
                 disabled={!selectedPiece}
@@ -426,29 +609,63 @@ function App() {
             )}
             <div className="space-y-2">
               <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                Move selected (±1)
+                Move (WASD) · rotate (arrows / 1–3)
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                {(["x", "y", "z"] as Axis[]).map((a) => (
-                  <div key={a} className="flex gap-1">
-                    <Btn
-                      variant="outline"
-                      className="flex-1 px-1"
-                      disabled={!selectedPiece}
-                      onClick={() => moveSelected(a, -1)}
-                    >
-                      −{a.toUpperCase()}
-                    </Btn>
-                    <Btn
-                      variant="outline"
-                      className="flex-1 px-1"
-                      disabled={!selectedPiece}
-                      onClick={() => moveSelected(a, 1)}
-                    >
-                      +{a.toUpperCase()}
-                    </Btn>
-                  </div>
-                ))}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex gap-1">
+                  <Btn
+                    variant="outline"
+                    className="flex-1 px-1"
+                    disabled={!selectedPiece}
+                    onClick={() => moveSelected("x", -1)}
+                  >
+                    −X
+                  </Btn>
+                  <Btn
+                    variant="outline"
+                    className="flex-1 px-1"
+                    disabled={!selectedPiece}
+                    onClick={() => moveSelected("x", 1)}
+                  >
+                    +X
+                  </Btn>
+                </div>
+                <div className="flex gap-1">
+                  <Btn
+                    variant="outline"
+                    className="flex-1 px-1"
+                    disabled={!selectedPiece}
+                    onClick={() => moveSelected("z", -1)}
+                  >
+                    −Z
+                  </Btn>
+                  <Btn
+                    variant="outline"
+                    className="flex-1 px-1"
+                    disabled={!selectedPiece}
+                    onClick={() => moveSelected("z", 1)}
+                  >
+                    +Z
+                  </Btn>
+                </div>
+                <div className="col-span-2 flex gap-1">
+                  <Btn
+                    variant="outline"
+                    className="flex-1 px-1"
+                    disabled={!selectedPiece}
+                    onClick={() => moveSelected("y", -1)}
+                  >
+                    −Y
+                  </Btn>
+                  <Btn
+                    variant="outline"
+                    className="flex-1 px-1"
+                    disabled={!selectedPiece}
+                    onClick={() => moveSelected("y", 1)}
+                  >
+                    +Y
+                  </Btn>
+                </div>
               </div>
             </div>
             {!sceneValidation.valid && (
@@ -512,7 +729,7 @@ function App() {
           </div>
           {mode === "scene" && (
             <p className="text-xs text-muted-foreground">
-              Applies to the selected scene piece (blocked if it would overlap).
+              Selected piece: 1/2/3 or X/Y/Z rotate, F flip. Arrows: ↑↓ X, ←→ Y.
             </p>
           )}
         </Section>
@@ -591,30 +808,39 @@ function App() {
                 onChange={(v) => H("size", v)}
                 fmt={(v) => `${Math.round(v * 100)}% of cube`}
               />
-              <Range
-                label="Rim sphere radius"
-                value={holes.rimRadius}
-                min={0}
-                max={0.5}
-                step={0.01}
-                onChange={(v) => H("rimRadius", v)}
-                fmt={(v) => `${Math.round(v * 100)}% of cube edge`}
+              <Toggle
+                label="Rim sphere"
+                checked={holes.rimSphere}
+                onChange={(v) => H("rimSphere", v)}
               />
-              <Range
-                label="Rim sphere offset"
-                value={holes.rimOffset}
-                min={-0.15}
-                max={0.5}
-                step={0.01}
-                onChange={(v) => H("rimOffset", v)}
-                fmt={(v) =>
-                  v === 0
-                    ? "Face center"
-                    : v > 0
-                      ? `+${Math.round(v * 100)}% outward`
-                      : `${Math.round(v * 100)}% inward`
-                }
-              />
+              {holes.rimSphere && (
+                <>
+                  <Range
+                    label="Rim sphere radius"
+                    value={holes.rimRadius}
+                    min={0}
+                    max={0.5}
+                    step={0.01}
+                    onChange={(v) => H("rimRadius", v)}
+                    fmt={(v) => `${Math.round(v * 100)}% of cube edge`}
+                  />
+                  <Range
+                    label="Rim sphere offset"
+                    value={holes.rimOffset}
+                    min={-0.15}
+                    max={0.5}
+                    step={0.01}
+                    onChange={(v) => H("rimOffset", v)}
+                    fmt={(v) =>
+                      v === 0
+                        ? "Face center"
+                        : v > 0
+                          ? `+${Math.round(v * 100)}% outward`
+                          : `${Math.round(v * 100)}% inward`
+                    }
+                  />
+                </>
+              )}
               {holeError && mode === "lab" && (
                 <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
                   {holeError}
@@ -697,6 +923,7 @@ function App() {
         <div className="viewport-bg relative h-[58vh] lg:h-auto lg:flex-1">
           <Viewport
             frameVoxels={worldVoxels}
+            floorPlaneY={floorPlaneY}
             pieces={viewportPieces}
             look={look}
             frameKey={`${frame}-${mode}-${pieces.length}`}
@@ -704,7 +931,7 @@ function App() {
             selectedVoxel={selected}
             onSelectVoxel={setSelected}
             onAddVoxel={(v) => setVoxels([...voxels, v])}
-            onSelectPiece={mode === "scene" ? setSelectedPieceId : undefined}
+            {...(mode === "scene" ? { onSelectPiece: setSelectedPieceId } : {})}
             colors={VIEW_COLORS}
           />
           <div className="pointer-events-none absolute left-3 top-3 space-y-1.5">

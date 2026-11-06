@@ -143,15 +143,17 @@ export const applyHoles = (
     }
   }
 
-  for (const axis of [...new Set(h.axes)]) {
-    for (const col of holeColumns(vs, axis)) {
-      for (const sp of exteriorOpeningSpheresParams(col, axis, voxelSet, o, unit, h)) {
-        let sg = new THREE.SphereGeometry(sp.radius, 24, 24);
-        sg = prepareBrushGeo(sg);
-        sg.translate(sp.cx, sp.cy, sp.cz);
-        const sb = new Brush(sg);
-        sb.updateMatrixWorld();
-        result = evaluator.evaluate(result, sb, SUBTRACTION);
+  if (h.rimSphere) {
+    for (const axis of [...new Set(h.axes)]) {
+      for (const col of holeColumns(vs, axis)) {
+        for (const sp of exteriorOpeningSpheresParams(col, axis, voxelSet, o, unit, h)) {
+          let sg = new THREE.SphereGeometry(sp.radius, 24, 24);
+          sg = prepareBrushGeo(sg);
+          sg.translate(sp.cx, sp.cy, sp.cz);
+          const sb = new Brush(sg);
+          sb.updateMatrixWorld();
+          result = evaluator.evaluate(result, sb, SUBTRACTION);
+        }
       }
     }
   }

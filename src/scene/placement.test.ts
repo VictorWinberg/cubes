@@ -7,16 +7,23 @@ import {
   allWorldVoxels,
   collectOccupancy,
   findFreeOffset,
+  findSpawnOffsetTop,
+  minWorldY,
   offsetDelta,
   pieceGroupPosition,
   toWorldVoxels,
+  violatesFloor,
   wouldOverlap,
 } from "./placement";
 import { validateScene } from "./sceneValidator";
 
 const straight = normalize(SHAPES[0]!.voxels);
 
-const piece = (id: string, offset: { x: number; y: number; z: number }, voxels = straight): PlacedPiece => ({
+const piece = (
+  id: string,
+  offset: { x: number; y: number; z: number },
+  voxels = straight,
+): PlacedPiece => ({
   id,
   name: id,
   voxels,
@@ -26,9 +33,7 @@ const piece = (id: string, offset: { x: number; y: number; z: number }, voxels =
 describe("placement", () => {
   it("toWorldVoxels adds offset to each local cell", () => {
     const p = piece("a", { x: 2, y: 1, z: -1 });
-    expect(toWorldVoxels(p)).toEqual(
-      p.voxels.map((v) => ({ x: v.x + 2, y: v.y + 1, z: v.z - 1 })),
-    );
+    expect(toWorldVoxels(p)).toEqual(p.voxels.map((v) => ({ x: v.x + 2, y: v.y + 1, z: v.z - 1 })));
   });
 
   it("collectOccupancy unions world cells", () => {
@@ -51,6 +56,30 @@ describe("placement", () => {
     expect(wouldOverlap({ voxels: straight, offset }, existing)).toBe(false);
   });
 
+  it("findSpawnOffsetTop drops first piece on the floor", () => {
+    const off = findSpawnOffsetTop(straight, []);
+    const world = straight.map((v) => ({
+      x: v.x + off.x,
+      y: v.y + off.y,
+      z: v.z + off.z,
+    }));
+    expect(Math.min(...world.map((v) => v.y))).toBe(0);
+  });
+
+  it("findSpawnOffsetTop spawns above stacked pieces without overlap", () => {
+    const existing = [piece("a", { x: 0, y: 0, z: 0 })];
+    const off = findSpawnOffsetTop(straight, existing);
+    expect(wouldOverlap({ voxels: straight, offset: off }, existing)).toBe(false);
+    const world = straight.map((v) => ({
+      x: v.x + off.x,
+      y: v.y + off.y,
+      z: v.z + off.z,
+    }));
+    expect(Math.min(...world.map((v) => v.y))).toBeGreaterThan(
+      Math.max(...toWorldVoxels(existing[0]!).map((v) => v.y)),
+    );
+  });
+
   it("offsetDelta and addOffsets move by one grid step", () => {
     expect(addOffsets({ x: 1, y: 2, z: 3 }, offsetDelta("y", 1))).toEqual({ x: 1, y: 3, z: 3 });
     expect(offsetDelta("x", -1)).toEqual({ x: -1, y: 0, z: 0 });
@@ -60,6 +89,13 @@ describe("placement", () => {
     const p = piece("a", { x: 0, y: 2, z: 0 });
     const pos = pieceGroupPosition(p, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, 1);
     expect(pos).toEqual([0, 2, 0]);
+  });
+
+  it("violatesFloor is true when world y would be negative", () => {
+    const p = piece("a", { x: 0, y: -1, z: 0 });
+    expect(minWorldY(p)).toBe(-1);
+    expect(violatesFloor(p)).toBe(true);
+    expect(violatesFloor(piece("b", { x: 0, y: 0, z: 0 }))).toBe(false);
   });
 });
 
