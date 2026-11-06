@@ -21,7 +21,7 @@ export const enumeratePolycubes = (n: number, mirrorIsSame: boolean): Voxel[][] 
 
 const FUNDAMENTAL_NAMES: [string, string][] = [
   ["I", "I"], ["O", "O"], ["T", "T"], ["L", "L / J"], ["S", "S / Z"],
-  ["BR", "Branch"], ["SR", "Right screw"], ["SL", "Left screw"],
+  ["BR", "T 3D"], ["SR", "Z 3D"], ["SL", "S 3D"],
 ];
 
 /** Name a shape regardless of orientation. */
@@ -42,7 +42,7 @@ export const fundamentalShapes = (mirrorIsSame: boolean): ShapeDef[] =>
     const flat = new Set(voxels.map((v) => v.z)).size === 1 || new Set(voxels.map((v) => v.y)).size === 1 || new Set(voxels.map((v) => v.x)).size === 1;
     return {
       id: `F${i + 1}`,
-      name: mirrorIsSame && name.includes("screw") ? "Screw (either hand)" : name,
+      name: mirrorIsSame && (name === "Z 3D" || name === "S 3D") ? "S / Z 3D" : name,
       category: flat ? "classic" : "3d",
       voxels,
     };

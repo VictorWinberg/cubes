@@ -23,6 +23,17 @@ export interface Appearance {
   /** Chamfer/round edges: radius as a fraction of the unit cube (0 = sharp boxes). */
   bevel: boolean;
   bevelRadius: number;
+  /**
+   * After each voxel RoundedBox is built, optionally snap vertices at contacts with neighbours.
+   * Combine freely to try silhouette-only vs partial snaps. All false = full per-cube rounding before CSG union.
+   */
+  bevelSnapSharedFaces: boolean;
+  bevelSnapSharedEdges: boolean;
+  bevelSnapSharedCorners: boolean;
+  /**
+   * Smoothness of each rounded cube (RoundedBoxGeometry segments). Higher = smoother arcs; 1 = very faceted.
+   */
+  bevelSegments: number;
   material: MaterialKind;
   light: number;
   wireframe: boolean;
@@ -31,10 +42,16 @@ export interface Appearance {
 
 export interface HoleSettings {
   enabled: boolean;
-  shape: "circle" | "square";
   size: number; // fraction of unit size
-  axis: Axis;
-  offsetU: number; // fraction of unit, within a cell
-  offsetV: number;
-  count: number;
+  /**
+   * Rim scoop sphere radius as a fraction of the unit cube edge (world radius = this × `unit`).
+   */
+  rimRadius: number;
+  /**
+   * How far the rim sphere center is pushed outward along the hole axis from the face center,
+   * as a fraction of the unit cube (world push = this × `unit`).
+   */
+  rimOffset: number;
+  /** Drilling directions; at least one when enabled. */
+  axes: Axis[];
 }

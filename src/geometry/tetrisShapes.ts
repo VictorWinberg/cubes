@@ -10,7 +10,7 @@ export const SHAPES: ShapeDef[] = [
   { id: "J", name: "J", category: "classic", voxels: p([1, 0, 0], [1, 1, 0], [1, 2, 0], [0, 0, 0]) },
   { id: "S", name: "S", category: "classic", voxels: p([0, 0, 0], [1, 0, 0], [1, 1, 0], [2, 1, 0]) },
   { id: "Z", name: "Z", category: "classic", voxels: p([0, 1, 0], [1, 1, 0], [1, 0, 0], [2, 0, 0]) },
-  { id: "BR", name: "Branch (corner)", category: "3d", voxels: p([0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]) },
-  { id: "SR", name: "Right screw (stair)", category: "3d", voxels: p([0, 0, 0], [1, 0, 0], [1, 1, 0], [1, 1, 1]) },
-  { id: "SL", name: "Left screw (stair)", category: "3d", voxels: p([0, 0, 0], [1, 0, 0], [1, 1, 0], [1, 1, -1]).map((v) => ({ ...v, z: v.z + 1 })) },
+  { id: "BR", name: "T 3D", category: "3d", voxels: p([0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]) },
+  { id: "SR", name: "Z 3D", category: "3d", voxels: p([0, 0, 0], [1, 0, 0], [1, 1, 0], [1, 1, 1]) },
+  { id: "SL", name: "S 3D", category: "3d", voxels: p([0, 0, 0], [1, 0, 0], [1, 1, 0], [1, 1, -1]).map((v) => ({ ...v, z: v.z + 1 })) },
 ];
