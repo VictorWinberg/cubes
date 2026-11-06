@@ -20,6 +20,9 @@ export interface Appearance {
   color: string;
   edgeColor: string;
   edges: boolean;
+  /** Chamfer/round edges: radius as a fraction of the unit cube (0 = sharp boxes). */
+  bevel: boolean;
+  bevelRadius: number;
   material: MaterialKind;
   light: number;
   wireframe: boolean;

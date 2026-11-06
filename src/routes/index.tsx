@@ -5,7 +5,7 @@ import { Btn, ColorField, Range, Section, Segmented, Toggle } from "@/components
 import { SHAPES } from "@/geometry/tetrisShapes";
 import { fundamentalShapes, identifyShape, pickRandom, randomGrowth } from "@/geometry/tetrocubeGenerator";
 import { validateShape } from "@/geometry/shapeValidator";
-import { buildSurface } from "@/geometry/meshBuilder";
+import { buildBeveledSurface, buildSurface } from "@/geometry/meshBuilder";
 import { applyHoles, checkHoles, holeColumns } from "@/geometry/holeGenerator";
 import { mirrorShape, normalize, randomOrientation, rotateShape, shapeKey } from "@/utils/shapeRotation";
 import { exportGLB, exportSTL } from "@/utils/exporters";
@@ -38,7 +38,18 @@ function App() {
   const [frame, setFrame] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
-  const [look, setLook] = useState<Appearance>({ unit: 1, color: "#e8622c", edgeColor: "#1d1b18", edges: true, material: "satin", light: 1, wireframe: false, grid: true });
+  const [look, setLook] = useState<Appearance>({
+    unit: 1,
+    color: "#e8622c",
+    edgeColor: "#1d1b18",
+    edges: true,
+    bevel: false,
+    bevelRadius: 0.12,
+    material: "satin",
+    light: 1,
+    wireframe: false,
+    grid: true,
+  });
   const [holes, setHoles] = useState<HoleSettings>({ enabled: false, shape: "circle", size: 0.4, axis: "y", offsetU: 0, offsetV: 0, count: 1 });
 
   const L = <K extends keyof Appearance>(k: K, v: Appearance[K]) => setLook((s) => ({ ...s, [k]: v }));
@@ -61,7 +72,7 @@ function App() {
   const maxHoles = holeColumns(voxels, holes.axis).length;
 
   const geometry = useMemo(() => {
-    const surf = buildSurface(voxels, look.unit);
+    const surf = look.bevel ? buildBeveledSurface(voxels, look.unit, look.bevelRadius) : buildSurface(voxels, look.unit);
     if (!validation.valid || !holes.enabled) return surf;
     try {
       return applyHoles(surf, voxels, look.unit, holes);
@@ -69,7 +80,7 @@ function App() {
       console.error(e);
       return surf;
     }
-  }, [voxels, look.unit, holes, validation.valid]);
+  }, [voxels, look.unit, look.bevel, look.bevelRadius, holes, validation.valid]);
 
   const fileName = `tetrocube-${(name ?? "custom").split(" ")[0]!.replace(/\W/g, "").toLowerCase()}`;
   const mat = { matte: [0, 0.95], satin: [0.05, 0.5], plastic: [0, 0.25], metal: [0.9, 0.3] }[look.material];
@@ -151,6 +162,18 @@ function App() {
           <ColorField label="Shape color" value={look.color} onChange={(v) => L("color", v)} />
           <ColorField label="Cube edge color" value={look.edgeColor} onChange={(v) => L("edgeColor", v)} />
           <Toggle label="Show cube edges" checked={look.edges} onChange={(v) => L("edges", v)} />
+          <Toggle label="Bevel edges" checked={look.bevel} onChange={(v) => L("bevel", v)} />
+          {look.bevel && (
+            <Range
+              label="Bevel radius"
+              value={look.bevelRadius}
+              min={0.03}
+              max={0.4}
+              step={0.01}
+              onChange={(v) => L("bevelRadius", v)}
+              fmt={(v) => `${Math.round(v * 100)}% of cube`}
+            />
+          )}
           <Segmented<MaterialKind> value={look.material} onChange={(v) => L("material", v)}
             options={[{ v: "matte", l: "Matte" }, { v: "satin", l: "Satin" }, { v: "plastic", l: "Gloss" }, { v: "metal", l: "Metal" }]} />
           <Range label="Lighting" value={look.light} min={0.2} max={2.5} step={0.1} onChange={(v) => L("light", v)} fmt={(v) => `${v.toFixed(1)}×`} />

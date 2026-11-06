@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { Brush, Evaluator, ADDITION } from "three-bvh-csg";
 import type { Voxel } from "@/types/geometry";
 import { keyOf } from "./shapeValidator";
 
@@ -39,6 +41,33 @@ export const buildSurface = (vs: Voxel[], unit: number) => {
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
   return g;
+};
+
+/**
+ * One fused mesh with rounded edges/corners on each voxel.
+ * `radiusFrac` is corner radius as a fraction of the unit cube edge (clamped so geometry stays valid).
+ */
+export const buildBeveledSurface = (vs: Voxel[], unit: number, radiusFrac: number) => {
+  if (!vs.length) return buildSurface(vs, unit);
+  const r = Math.min(Math.max(radiusFrac, 0), 0.45) * unit;
+  if (r <= 1e-6) return buildSurface(vs, unit);
+
+  const o = displayOffset(vs);
+  const evaluator = new Evaluator();
+  evaluator.attributes = ["position", "normal"];
+  evaluator.useGroups = false;
+
+  let result: Brush | null = null;
+  for (const v of vs) {
+    let g: THREE.BufferGeometry = new RoundedBoxGeometry(unit, unit, unit, 2, r);
+    if ("uv" in g.attributes) g.deleteAttribute("uv");
+    g = g.toNonIndexed();
+    g.translate((v.x + 0.5 + o.x) * unit, (v.y + 0.5 + o.y) * unit, (v.z + 0.5 + o.z) * unit);
+    const brush = new Brush(g);
+    brush.updateMatrixWorld();
+    result = result ? evaluator.evaluate(result, brush, ADDITION) : brush;
+  }
+  return result!.geometry;
 };
 
 /** Thin outline segments for every cube boundary (visual only). */
