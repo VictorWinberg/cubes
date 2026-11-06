@@ -1,23 +1,206 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { Viewport } from "@/components/Viewport";
+import { Btn, ColorField, Range, Section, Segmented, Toggle } from "@/components/ui-bits";
+import { SHAPES } from "@/geometry/tetrisShapes";
+import { fundamentalShapes, identifyShape, pickRandom, randomGrowth } from "@/geometry/tetrocubeGenerator";
+import { validateShape } from "@/geometry/shapeValidator";
+import { buildSurface } from "@/geometry/meshBuilder";
+import { applyHoles, checkHoles, holeColumns } from "@/geometry/holeGenerator";
+import { mirrorShape, normalize, randomOrientation, rotateShape, shapeKey } from "@/utils/shapeRotation";
+import { exportGLB, exportSTL } from "@/utils/exporters";
+import type { Appearance, Axis, HoleSettings, MaterialKind, Voxel } from "@/types/geometry";
 
-// The home route ships no og:image, so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
-  component: Index,
+  ssr: false,
+  head: () => ({
+    meta: [
+      { title: "Tetrocube — 3D four-cube shape generator" },
+      { name: "description", content: "Generate, rotate, edit, drill and export every 3D shape made of four connected cubes." },
+      { property: "og:title", content: "Tetrocube — 3D four-cube shape generator" },
+      { property: "og:description", content: "Tetris pieces, expanded into three dimensions. Export GLB and STL." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
+  component: App,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
-function Index() {
+const VIEW_COLORS = { selection: "#ff6a2b", ghost: "#ff6a2b", grid: "#c9c6bf", gridStrong: "#9f9b92" };
+
+function App() {
+  const [setKind, setSetKind] = useState<"presets" | "fundamental">("presets");
+  const [mirrorSame, setMirrorSame] = useState(false);
+  const [variations, setVariations] = useState(false);
+  const list = useMemo(() => (setKind === "presets" ? SHAPES : fundamentalShapes(mirrorSame)), [setKind, mirrorSame]);
+  const [index, setIndex] = useState(0);
+  const [voxels, setVoxels] = useState<Voxel[]>(SHAPES[0].voxels);
+  const [frame, setFrame] = useState(0);
+  const [editMode, setEditMode] = useState(false);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [look, setLook] = useState<Appearance>({ unit: 1, color: "#e8622c", edgeColor: "#1d1b18", edges: true, material: "satin", light: 1, wireframe: false, grid: true });
+  const [holes, setHoles] = useState<HoleSettings>({ enabled: false, shape: "circle", size: 0.4, axis: "y", offsetU: 0, offsetV: 0, count: 1 });
+
+  const L = <K extends keyof Appearance>(k: K, v: Appearance[K]) => setLook((s) => ({ ...s, [k]: v }));
+  const H = <K extends keyof HoleSettings>(k: K, v: HoleSettings[K]) => setHoles((s) => ({ ...s, [k]: v }));
+
+  const load = (vs: Voxel[], i = index, reframe = true) => {
+    setVoxels(normalize(vs));
+    setIndex(i);
+    setSelected(null);
+    if (reframe) setFrame((f) => f + 1);
+  };
+  const pick = (i: number) => {
+    const n = (i + list.length) % list.length;
+    load(variations ? randomOrientation(list[n].voxels, !mirrorSame) : list[n].voxels, n);
+  };
+
+  const validation = validateShape(voxels);
+  const name = identifyShape(voxels);
+  const holeError = validation.valid ? checkHoles(voxels, holes) : null;
+  const maxHoles = holeColumns(voxels, holes.axis).length;
+
+  const geometry = useMemo(() => {
+    const surf = buildSurface(voxels, look.unit);
+    if (!validation.valid || !holes.enabled) return surf;
+    try {
+      return applyHoles(surf, voxels, look.unit, holes);
+    } catch (e) {
+      console.error(e);
+      return surf;
+    }
+  }, [voxels, look.unit, holes, validation.valid]);
+
+  const fileName = `tetrocube-${(name ?? "custom").split(" ")[0].replace(/\W/g, "").toLowerCase()}`;
+  const mat = { matte: [0, 0.95], satin: [0.05, 0.5], plastic: [0, 0.25], metal: [0.9, 0.3] }[look.material];
+  const is3D = ["x", "y", "z"].every((k) => new Set(voxels.map((v) => v[k as Axis])).size > 1);
+
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
+    <div className="flex min-h-screen flex-col bg-background text-foreground lg:h-screen lg:flex-row lg:overflow-hidden">
+      {/* Sidebar */}
+      <aside className="order-2 w-full shrink-0 border-border bg-card lg:order-1 lg:w-80 lg:overflow-y-auto lg:border-r">
+        <header className="hidden border-b border-border px-4 py-4 lg:block">
+          <Logo />
+        </header>
+
+        <Section title="Generate">
+          <Btn variant="primary" className="h-11 w-full text-base" onClick={() => pick(pickRandom(list, index))}>Generate Random Shape</Btn>
+          <div className="grid grid-cols-2 gap-2">
+            <Btn onClick={() => pick(index - 1)}>← Previous</Btn>
+            <Btn onClick={() => pick(index + 1)}>Next →</Btn>
+            <Btn onClick={() => load(randomGrowth(!mirrorSame), index)} title="Grow 4 connected cubes at random">Randomize</Btn>
+            <Btn onClick={() => load(list[index % list.length].voxels, index)}>Reset Shape</Btn>
+          </div>
+          <Segmented value={setKind} onChange={(v) => { setSetKind(v); setIndex(0); load((v === "presets" ? SHAPES : fundamentalShapes(mirrorSame))[0].voxels, 0); }}
+            options={[{ v: "presets", l: "Tetris + 3D presets" }, { v: "fundamental", l: "Unique forms" }]} />
+          <Toggle label="Mirror images count as same" checked={mirrorSame} onChange={setMirrorSame} />
+          <Toggle label="Random rotation / mirror variations" checked={variations} onChange={setVariations} />
+        </Section>
+
+        <Section title={`Shapes · ${list.length}`}>
+          <div className="grid grid-cols-4 gap-1.5">
+            {list.map((s, i) => (
+              <button key={s.id} type="button" onClick={() => pick(i)} title={s.name}
+                className={`h-10 truncate rounded-md border px-1 text-xs font-semibold transition-colors ${i === index && shapeKey(s.voxels) === shapeKey(voxels) ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-accent"}`}>
+                {s.name.split(" ")[0]}
+                <span className="block text-[9px] font-normal text-muted-foreground">{s.category === "3d" ? "3D" : "flat"}</span>
+              </button>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Rotate & mirror">
+          <div className="grid grid-cols-4 gap-2">
+            {(["x", "y", "z"] as Axis[]).map((a) => (
+              <Btn key={a} variant="outline" onClick={() => load(rotateShape(voxels, a), index, false)}>⟳ {a.toUpperCase()}</Btn>
+            ))}
+            <Btn variant="outline" onClick={() => load(mirrorShape(voxels), index, false)}>Mirror</Btn>
+          </div>
+        </Section>
+
+        <Section title="Edit cubes">
+          <Toggle label="Edit mode" checked={editMode} onChange={(v) => { setEditMode(v); setSelected(null); }} />
+          {editMode && (
+            <p className="text-xs text-muted-foreground">Tap a cube to select it. Tap a faint ghost cube to add one in that free spot.</p>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <Btn variant="outline" disabled={selected === null} onClick={() => { setVoxels(voxels.filter((_, i) => i !== selected)); setSelected(null); }}>Remove selected</Btn>
+            <Btn variant="outline" onClick={() => load(list[index % list.length].voxels, index)}>Reset to valid</Btn>
+          </div>
+        </Section>
+
+        <Section title="Holes">
+          <Toggle label="Drill holes" checked={holes.enabled} onChange={(v) => H("enabled", v)} />
+          {holes.enabled && (
+            <>
+              <Segmented value={holes.shape} onChange={(v) => H("shape", v)} options={[{ v: "circle", l: "Circular" }, { v: "square", l: "Square" }]} />
+              <div className="flex items-center justify-between text-sm"><span>Direction</span>
+                <div className="w-40"><Segmented value={holes.axis} onChange={(v) => H("axis", v)} options={[{ v: "x", l: "X" }, { v: "y", l: "Y" }, { v: "z", l: "Z" }]} /></div>
+              </div>
+              <Range label="Size" value={holes.size} min={0.1} max={0.95} step={0.05} onChange={(v) => H("size", v)} fmt={(v) => `${Math.round(v * 100)}% of cube`} />
+              <Range label="Offset A" value={holes.offsetU} min={-0.4} max={0.4} step={0.05} onChange={(v) => H("offsetU", v)} fmt={(v) => v.toFixed(2)} />
+              <Range label="Offset B" value={holes.offsetV} min={-0.4} max={0.4} step={0.05} onChange={(v) => H("offsetV", v)} fmt={(v) => v.toFixed(2)} />
+              <Range label="Number of holes" value={holes.count} min={1} max={4} step={1} onChange={(v) => H("count", v)} fmt={(v) => `${v} (max ${maxHoles})`} />
+              {holeError && <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{holeError}</p>}
+            </>
+          )}
+        </Section>
+
+        <Section title="Appearance">
+          <Range label="Unit cube size" value={look.unit} min={0.5} max={3} step={0.1} onChange={(v) => L("unit", v)} fmt={(v) => `${v.toFixed(1)} units`} />
+          <ColorField label="Shape color" value={look.color} onChange={(v) => L("color", v)} />
+          <ColorField label="Cube edge color" value={look.edgeColor} onChange={(v) => L("edgeColor", v)} />
+          <Toggle label="Show cube edges" checked={look.edges} onChange={(v) => L("edges", v)} />
+          <Segmented<MaterialKind> value={look.material} onChange={(v) => L("material", v)}
+            options={[{ v: "matte", l: "Matte" }, { v: "satin", l: "Satin" }, { v: "plastic", l: "Gloss" }, { v: "metal", l: "Metal" }]} />
+          <Range label="Lighting" value={look.light} min={0.2} max={2.5} step={0.1} onChange={(v) => L("light", v)} fmt={(v) => `${v.toFixed(1)}×`} />
+        </Section>
+      </aside>
+
+      {/* Main */}
+      <main className="order-1 flex min-w-0 flex-1 flex-col lg:order-2">
+        <div className="flex items-center justify-between border-b border-border bg-card px-4 py-3 lg:hidden"><Logo /></div>
+        <div className="viewport-bg relative h-[58vh] lg:h-auto lg:flex-1">
+          <Viewport voxels={voxels} geometry={geometry} look={look} frameKey={`${frame}`} editMode={editMode} selected={selected}
+            onSelect={setSelected} onAdd={(v) => setVoxels([...voxels, v])} colors={VIEW_COLORS} />
+          <div className="pointer-events-none absolute left-3 top-3 space-y-1.5">
+            <div className="rounded-md bg-card/90 px-3 py-2 shadow-sm backdrop-blur">
+              <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">Shape</div>
+              <div className="text-lg font-semibold leading-tight">{name ?? "Custom"}{is3D && validation.valid && <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 align-middle text-[10px] font-bold text-primary">3D</span>}</div>
+            </div>
+            <div className={`rounded-md px-3 py-1.5 text-xs font-medium shadow-sm ${validation.valid ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive"}`}>
+              {validation.valid ? "✓ Valid — 4 connected cubes" : validation.errors.join(" ")}
+            </div>
+          </div>
+        </div>
+        <footer className="flex flex-wrap items-center gap-2 border-t border-border bg-card px-3 py-2.5">
+          <span className="font-mono text-xs text-muted-foreground">
+            Cubes <b className={voxels.length === 4 ? "text-foreground" : "text-destructive"}>{voxels.length}/4</b> · {name ?? "custom"}
+          </span>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <Btn onClick={() => setFrame((f) => f + 1)}>Reset camera</Btn>
+            <Btn active={look.wireframe} onClick={() => L("wireframe", !look.wireframe)}>Wireframe</Btn>
+            <Btn active={look.grid} onClick={() => L("grid", !look.grid)}>Grid</Btn>
+            <Btn variant="primary" disabled={!validation.valid} onClick={() => exportGLB(geometry, look.color, fileName, mat[0], mat[1])}>Export GLB</Btn>
+            <Btn variant="primary" disabled={!validation.valid} onClick={() => exportSTL(geometry, fileName)}>Export STL</Btn>
+          </div>
+        </footer>
+      </main>
+    </div>
+  );
+}
+
+function Logo() {
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="grid h-7 w-7 grid-cols-2 gap-0.5">
+        <span className="rounded-sm bg-primary" /><span />
+        <span className="rounded-sm bg-primary" /><span className="rounded-sm bg-foreground" />
+      </div>
+      <div>
+        <div className="font-display text-base font-bold leading-none tracking-tight">Tetrocube</div>
+        <div className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">4-cube shape lab</div>
+      </div>
     </div>
   );
 }
