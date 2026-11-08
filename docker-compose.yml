@@ -8,7 +8,7 @@ services:
       args:
         VITE_EXPORT_API_URL: http://localhost:8000
     ports:
-      - "8080:80"
+      - "8080:8080"
     depends_on:
       export-api:
         condition: service_started
