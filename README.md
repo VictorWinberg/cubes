@@ -1,42 +1,25 @@
 # Cubes
 
-Tetris pieces in 3D — preview in the browser, export STL/GLB, optional Blender `.blend` via a Python API.
-
-## Architecture
-
-| Part | Stack | Hosting |
-|------|-------|---------|
-| Frontend | TanStack Start + React + Three.js | GitHub Pages (static build on `main`) |
-| Export API | FastAPI + Blender headless | Local only: Docker or Blender on your machine |
-
-The browser sends **JSON** (`ExportPayload` in `src/types/exportPayload.ts`). Python builds quad voxel meshes and returns a **`.blend`** file.
-
-GitHub Pages ships the static app only. There is no production Docker image for the frontend. The **Export Blender** button appears only when `VITE_EXPORT_API_URL` is set at build time (e.g. `.env.local` for dev, or a GitHub Actions variable if you host a public API).
+Tetris pieces in 3D — preview in the browser, export STL/GLB, optional Blender `.blend` via a local Python API.
 
 ## Local development
 
-You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
-
 ```sh
 npm i
-cp .env.example .env.local
+cp .env.example .env.local   # VITE_EXPORT_API_URL=http://localhost:8000
 npm run dev
 ```
 
-Open the URL Vite prints (usually http://localhost:5173).
-
-**Export Blender** locally — API via Docker (not used for Pages):
+**Export Blender** needs the API alongside the dev server:
 
 ```sh
-npm run docker:api
+npm run docker:api   # http://localhost:8000 — FastAPI + headless Blender
 ```
 
-API: http://localhost:8000 — keep it running alongside `npm run dev`.
+Or without Docker: `cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && uvicorn app.main:app --reload --port 8000` (Blender on `PATH`).
 
-Without Docker: [`backend/README.md`](backend/README.md).
+The **Export Blender** button is compiled in only when `VITE_EXPORT_API_URL` is set. GitHub Pages builds omit it unless you set that env in CI.
 
 ## GitHub Pages
 
-Pushes to `main` run `.github/workflows/deploy.yml`: `GITHUB_PAGES=true`, assets under `dist/client`, published with [peaceiris/actions-gh-pages](https://github.com/peaceiris/actions-gh-pages).
-
-Repository **Settings → Pages**: source = deploy branch from that action (typically `gh-pages`).
+Pushes to `main` run `.github/workflows/deploy.yml` → static build → `gh-pages` branch.

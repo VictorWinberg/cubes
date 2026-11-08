@@ -2,7 +2,7 @@ import { displayOffset } from "@/geometry/meshBuilder";
 import { pieceGroupPosition } from "@/scene/placement";
 import type { ExportPayload, ExportPiece } from "@/types/exportPayload";
 import { holeSettingsForExport } from "@/types/exportPayload";
-import type { HoleSettings, PlacedPiece, Voxel } from "@/types/geometry";
+import type { AppMode, HoleSettings, PlacedPiece, Voxel } from "@/types/geometry";
 
 export const buildLabExportPayload = (
   voxels: Voxel[],
@@ -38,3 +38,22 @@ export const buildSceneExportPayload = (
     };
   }),
 });
+
+const shapeSlug = (shapeName: string | undefined) =>
+  (shapeName ?? "custom").split(" ")[0]!.replace(/\W/g, "").toLowerCase();
+
+const dimSuffix = (vs: Voxel[]) =>
+  (["x", "y", "z"] as const).every((k) => new Set(vs.map((v) => v[k])).size > 1) ? "3d" : "2d";
+
+/** Suggested `.blend` download name for lab / scene / solver. */
+export const blendFileNameForMode = (
+  mode: AppMode,
+  voxels: Voxel[],
+  options?: { shapeName?: string; pieceCount?: number },
+): string => {
+  const dim = dimSuffix(voxels);
+  if (mode === "lab") return `tetracube-${shapeSlug(options?.shapeName)}-${dim}.blend`;
+  if (mode === "solver") return `tetracube-4x4x4-solver-${dim}.blend`;
+  const n = options?.pieceCount ?? 0;
+  return `tetracube-scene-${n}pieces-${dim}.blend`;
+};

@@ -14,7 +14,7 @@ export const requestBlendFile = async (
   if (!base) {
     return {
       type: "unconfigured",
-      message: "Set VITE_EXPORT_API_URL to your Python export service (see backend/README.md).",
+      message: "Set VITE_EXPORT_API_URL to your Python export service (see README).",
     };
   }
 
