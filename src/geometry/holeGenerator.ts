@@ -36,13 +36,13 @@ const prepareBrushGeo = (g: THREE.BufferGeometry) => {
 };
 
 /** Align default Y-up cylinder/box to the tunnel axis (x|y|z). */
-const alignToAxis = (g: THREE.BufferGeometry, axis: Axis) => {
+export const alignToAxis = (g: THREE.BufferGeometry, axis: Axis) => {
   if (axis === "x") g.rotateZ(Math.PI / 2);
   if (axis === "z") g.rotateX(Math.PI / 2);
 };
 
 /** Drill volume along the column: circular tunnel. */
-const buildTunnelGeometry = (axis: Axis, len: number, d: number): THREE.BufferGeometry => {
+export const buildTunnelGeometry = (axis: Axis, len: number, d: number): THREE.BufferGeometry => {
   const r = d / 2;
   const g: THREE.BufferGeometry = new THREE.CylinderGeometry(r, r, len, 40);
   alignToAxis(g, axis);
@@ -50,7 +50,7 @@ const buildTunnelGeometry = (axis: Axis, len: number, d: number): THREE.BufferGe
 };
 
 /** World-space face centers + outward normals for exterior drill openings of one column. */
-const exteriorOpeningSpheresParams = (
+export const exteriorOpeningSpheresParams = (
   col: { u: number; w: number; min: number; max: number },
   axis: Axis,
   vs: Set<string>,

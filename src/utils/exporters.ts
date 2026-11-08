@@ -2,6 +2,13 @@ import * as THREE from "three";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import {
+  buildBlenderExportObjects,
+  buildSceneBlenderExportObjects,
+  type BlenderExportObject,
+} from "@/geometry/blenderExport";
+import type { HoleSettings, Voxel } from "@/types/geometry";
+import { buildBlenderZipBlob } from "@/utils/blenderPackage";
 
 const download = (data: BlobPart, name: string, type: string) => {
   const url = URL.createObjectURL(new Blob([data], { type }));
@@ -38,6 +45,30 @@ export const exportSTL = (geometry: THREE.BufferGeometry, name: string) => {
   const data = new STLExporter().parse(makeMesh(geometry, "#fff"), { binary: true }) as DataView;
   download(data.buffer as ArrayBuffer, `${name}.stl`, "model/stl");
 };
+
+/**
+ * Zip with quad OBJ + Blender script → native .blend (see README in zip).
+ * Uses sharp voxel shells and separate boolean cutters for holes (no CSG triangle soup).
+ */
+export const exportBlenderPackage = (objects: BlenderExportObject[], name: string) => {
+  download(buildBlenderZipBlob(objects), `${name}-blender.zip`, "application/zip");
+};
+
+export const blenderObjectsForLab = (
+  voxels: Voxel[],
+  unit: number,
+  holes: HoleSettings,
+): BlenderExportObject[] => buildBlenderExportObjects(voxels, unit, holes);
+
+export const blenderObjectsForScene = (
+  parts: {
+    voxels: Voxel[];
+    unit: number;
+    holes: HoleSettings;
+    position: [number, number, number];
+    id: string;
+  }[],
+): BlenderExportObject[] => buildSceneBlenderExportObjects(parts);
 
 /**
  * Merge piece geometries after applying each group's world translation.

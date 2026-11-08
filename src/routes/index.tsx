@@ -17,6 +17,9 @@ import {
   rotateShapeCCW,
 } from "@/utils/shapeRotation";
 import { exportGLB, exportSTL, mergeTranslatedGeometries } from "@/utils/exporters";
+import { blendExportFileNameForMode } from "@/lib/blendExportFileName";
+import { buildLabExportPayload, buildSceneExportPayload } from "@/lib/buildExportPayload";
+import { downloadBlob, isBlendExportAvailable, requestBlendFile } from "@/lib/exportApi";
 import {
   addOffsets,
   allWorldVoxels,
@@ -109,6 +112,7 @@ function App() {
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
   const [look, setLook] = useState<Appearance>(defaultLabLook);
   const [holes, setHoles] = useState<HoleSettings>(defaultLabHoles);
+  const [blendExporting, setBlendExporting] = useState(false);
 
   const labLookSnap = useRef<Appearance | null>(null);
   const labHolesSnap = useRef<HoleSettings | null>(null);
@@ -520,8 +524,7 @@ function App() {
   ];
   const is3D = ["x", "y", "z"].every((k) => new Set(voxels.map((v) => v[k as Axis])).size > 1);
 
-  const canExport =
-    mode === "lab" ? validation.valid : pieces.length > 0 && sceneValidation.valid;
+  const canExport = mode === "lab" ? validation.valid : pieces.length > 0 && sceneValidation.valid;
 
   const doExportGLB = () => {
     if (mode === "lab") {
@@ -553,6 +556,32 @@ function App() {
     if (!merged) return;
     exportSTL(merged, mode === "solver" ? "4x4x4-tetracubes" : `scene-${pieces.length}pieces`);
     merged.dispose();
+  };
+
+  const doExportBlender = async () => {
+    if (!isBlendExportAvailable()) return;
+
+    const exportVoxels = mode === "lab" ? voxels : worldVoxels;
+    const fileName = blendExportFileNameForMode(mode, exportVoxels, {
+      shapeName: name,
+      pieceCount: pieces.length,
+    });
+    const payload =
+      mode === "lab"
+        ? buildLabExportPayload(voxels, look.unit, holes, name, fileName)
+        : { ...buildSceneExportPayload(pieces, worldVoxels, look.unit, holes), fileName };
+
+    setBlendExporting(true);
+    try {
+      const result = await requestBlendFile(payload);
+      if ("type" in result) {
+        window.alert(result.message);
+        return;
+      }
+      downloadBlob(result.blob, fileName);
+    } finally {
+      setBlendExporting(false);
+    }
   };
 
   return (
@@ -589,58 +618,59 @@ function App() {
         {(mode === "scene" || mode === "solver") && (
           <Section title={`Scene · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}`}>
             {mode === "scene" && (
-            <div className="grid grid-cols-2 gap-2">
-              <Btn
-                variant="primary"
-                disabled={!validation.valid}
-                onClick={addCurrentToScene}
-                title="Drop the current lab shape from above the stack"
-              >
-                Add current
-              </Btn>
-              <Btn
-                onClick={addRandomToScene}
-                title="Random catalog shape and orientation from above (Enter)"
-              >
-                Add random
-              </Btn>
-              <Btn
-                variant="outline"
-                className="col-span-2"
-                onClick={nextRandomPieceInScene}
-                title="Random piece at the top; replaces selected piece if any"
-              >
-                Next piece (N)
-              </Btn>
-              <Btn
-                variant="outline"
-                disabled={!selectedPiece}
-                onClick={() => {
-                  if (!selectedPiece) return;
-                  setPieces((ps) => ps.filter((p) => p.id !== selectedPiece.id));
-                  setSelectedPieceId(null);
-                }}
-              >
-                Remove selected
-              </Btn>
-              <Btn
-                variant="outline"
-                disabled={pieces.length === 0}
-                onClick={() => {
-                  setPieces([]);
-                  setSelectedPieceId(null);
-                  setFrame((f) => f + 1);
-                }}
-              >
-                Clear scene
-              </Btn>
-            </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Btn
+                  variant="primary"
+                  disabled={!validation.valid}
+                  onClick={addCurrentToScene}
+                  title="Drop the current lab shape from above the stack"
+                >
+                  Add current
+                </Btn>
+                <Btn
+                  onClick={addRandomToScene}
+                  title="Random catalog shape and orientation from above (Enter)"
+                >
+                  Add random
+                </Btn>
+                <Btn
+                  variant="outline"
+                  className="col-span-2"
+                  onClick={nextRandomPieceInScene}
+                  title="Random piece at the top; replaces selected piece if any"
+                >
+                  Next piece (N)
+                </Btn>
+                <Btn
+                  variant="outline"
+                  disabled={!selectedPiece}
+                  onClick={() => {
+                    if (!selectedPiece) return;
+                    setPieces((ps) => ps.filter((p) => p.id !== selectedPiece.id));
+                    setSelectedPieceId(null);
+                  }}
+                >
+                  Remove selected
+                </Btn>
+                <Btn
+                  variant="outline"
+                  disabled={pieces.length === 0}
+                  onClick={() => {
+                    setPieces([]);
+                    setSelectedPieceId(null);
+                    setFrame((f) => f + 1);
+                  }}
+                >
+                  Clear scene
+                </Btn>
+              </div>
             )}
             {mode === "solver" && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Same multiset as the classic polycube puzzle: <span className="font-mono">2×</span> I, O, T, Z&nbsp;3D,
-                  S&nbsp;3D, T&nbsp;3D and <span className="font-mono">1×</span> L, J, S, Z — 16 pieces, 64 cells.
+                  Same multiset as the classic polycube puzzle:{" "}
+                  <span className="font-mono">2×</span> I, O, T, Z&nbsp;3D, S&nbsp;3D, T&nbsp;3D and{" "}
+                  <span className="font-mono">1×</span> L, J, S, Z — 16 pieces, 64 cells.
                 </p>
                 <Btn
                   variant="outline"
@@ -1007,7 +1037,9 @@ function App() {
             selectedVoxel={selected}
             onSelectVoxel={setSelected}
             onAddVoxel={(v) => setVoxels([...voxels, v])}
-            {...(mode === "scene" || mode === "solver" ? { onSelectPiece: setSelectedPieceId } : {})}
+            {...(mode === "scene" || mode === "solver"
+              ? { onSelectPiece: setSelectedPieceId }
+              : {})}
             colors={VIEW_COLORS}
           />
           <div className="pointer-events-none absolute left-3 top-3 space-y-1.5">
@@ -1096,11 +1128,29 @@ function App() {
               Grid
             </Btn>
             <Btn variant="primary" disabled={!canExport} onClick={doExportGLB}>
-              {mode === "scene" ? "Export scene GLB" : mode === "solver" ? "Export GLB" : "Export GLB"}
+              {mode === "scene"
+                ? "Export scene GLB"
+                : mode === "solver"
+                  ? "Export GLB"
+                  : "Export GLB"}
             </Btn>
             <Btn variant="primary" disabled={!canExport} onClick={doExportSTL}>
-              {mode === "scene" ? "Export scene STL" : mode === "solver" ? "Export STL" : "Export STL"}
+              {mode === "scene"
+                ? "Export scene STL"
+                : mode === "solver"
+                  ? "Export STL"
+                  : "Export STL"}
             </Btn>
+            {isBlendExportAvailable() ? (
+              <Btn
+                variant="primary"
+                disabled={!canExport || blendExporting}
+                onClick={() => void doExportBlender()}
+                title="Download .blend from Python export API"
+              >
+                {blendExporting ? "Exporting…" : "Export Blender"}
+              </Btn>
+            ) : null}
           </div>
         </footer>
       </main>
@@ -1110,7 +1160,11 @@ function App() {
 
 function Logo({ mode }: { mode: AppMode }) {
   const subtitle =
-    mode === "scene" ? "stack puzzle" : mode === "solver" ? "4³ polycube solver" : "4-cube shape lab";
+    mode === "scene"
+      ? "stack puzzle"
+      : mode === "solver"
+        ? "4³ polycube solver"
+        : "4-cube shape lab";
   return (
     <div className="flex items-center gap-2.5">
       <div className="grid h-7 w-7 grid-cols-2 gap-0.5">
