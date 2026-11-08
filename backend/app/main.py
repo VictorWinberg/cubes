@@ -1,4 +1,3 @@
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -6,21 +5,22 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from slugify import slugify
 
 from app.schemas import ExportPayload
+from app.settings import Settings
 
-BLENDER_BIN = os.environ.get("BLENDER_BIN", "blender")
-EXPORT_TIMEOUT_SEC = int(os.environ.get("EXPORT_TIMEOUT_SEC", "120"))
-CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()]
+settings = Settings()
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = BACKEND_ROOT / "blender" / "build_blend.py"
 
 app = FastAPI(title="Tetracubes export API", version="0.1.0")
 
+origins = settings.cors_origin_list()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if CORS_ORIGINS == ["*"] else CORS_ORIGINS,
+    allow_origins=["*"] if origins == ["*"] else origins,
     allow_credentials=False,
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["*"],
@@ -29,13 +29,26 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"ok": True, "blender": BLENDER_BIN}
+    return {"ok": True, "blender": settings.blender_bin}
+
+
+def _attachment_name(payload: ExportPayload) -> str:
+    if payload.file_name:
+        base = payload.file_name.removesuffix(".blend").removesuffix(".BLEND")
+    elif payload.pieces:
+        base = payload.pieces[0].name or payload.pieces[0].id
+    else:
+        base = "tetracubes"
+    safe = slugify(base, lowercase=True, separator="_") or "tetracubes"
+    return f"{safe[:80]}.blend"
 
 
 @app.post("/v1/export/blend")
 def export_blend(payload: ExportPayload):
     if not BUILD_SCRIPT.is_file():
         raise HTTPException(status_code=500, detail="build_blend.py missing on server")
+
+    download_name = _attachment_name(payload)
 
     with tempfile.TemporaryDirectory(prefix="tetracubes-") as tmp:
         tmp_path = Path(tmp)
@@ -44,7 +57,7 @@ def export_blend(payload: ExportPayload):
         job_json.write_text(payload.model_dump_json(by_alias=True), encoding="utf-8")
 
         cmd = [
-            BLENDER_BIN,
+            settings.blender_bin,
             "--background",
             "--python",
             str(BUILD_SCRIPT),
@@ -58,13 +71,13 @@ def export_blend(payload: ExportPayload):
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=EXPORT_TIMEOUT_SEC,
+                timeout=settings.export_timeout_sec,
                 check=False,
             )
         except FileNotFoundError as e:
             raise HTTPException(
                 status_code=503,
-                detail=f"Blender not found ({BLENDER_BIN}). Install Blender or set BLENDER_BIN.",
+                detail=f"Blender not found ({settings.blender_bin}). Install Blender or set BLENDER_BIN.",
             ) from e
         except subprocess.TimeoutExpired as e:
             raise HTTPException(status_code=504, detail="Blender export timed out") from e
@@ -76,20 +89,10 @@ def export_blend(payload: ExportPayload):
                 detail=f"Blender failed (code {proc.returncode}): {stderr}",
             )
 
-        if payload.file_name:
-            base = payload.file_name
-            if base.lower().endswith(".blend"):
-                base = base[:-6]
-            slug = base
-        elif payload.pieces:
-            slug = payload.pieces[0].name or payload.pieces[0].id
-        else:
-            slug = "tetracubes"
-        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in slug)[:80] or "tetracubes"
         data = out_blend.read_bytes()
 
     return Response(
         content=data,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{safe}.blend"'},
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
     )
