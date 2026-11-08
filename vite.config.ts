@@ -15,15 +15,16 @@ const routerBasepath =
 
 export default defineConfig({
   base: baseUrl,
+  preview: {
+    host: "127.0.0.1",
+  },
   plugins: [
     tsConfigPaths(),
     tanstackStart({
-      // Custom SSR entry: src/server.ts (see TanStack Start server entry guide).
       server: { entry: "server" },
       ...(githubPages
         ? {
             router: { basepath: routerBasepath },
-            // Default shell is written as _shell.html; Pages needs a root index.html.
             spa: {
               prerender: {
                 outputPath: "/index",

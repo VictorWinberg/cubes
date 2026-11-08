@@ -18,6 +18,12 @@ import {
 } from "@/utils/shapeRotation";
 import { exportGLB, exportSTL, mergeTranslatedGeometries } from "@/utils/exporters";
 import {
+  blendFileNameForMode,
+  buildLabExportPayload,
+  buildSceneExportPayload,
+} from "@/lib/buildExportPayload";
+import { downloadBlob, isBlendExportAvailable, requestBlendFile } from "@/lib/exportApi";
+import {
   addOffsets,
   allWorldVoxels,
   dropToRestingOffset,
@@ -109,6 +115,7 @@ function App() {
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
   const [look, setLook] = useState<Appearance>(defaultLabLook);
   const [holes, setHoles] = useState<HoleSettings>(defaultLabHoles);
+  const [blendExporting, setBlendExporting] = useState(false);
 
   const labLookSnap = useRef<Appearance | null>(null);
   const labHolesSnap = useRef<HoleSettings | null>(null);
@@ -553,6 +560,32 @@ function App() {
     if (!merged) return;
     exportSTL(merged, mode === "solver" ? "4x4x4-tetracubes" : `scene-${pieces.length}pieces`);
     merged.dispose();
+  };
+
+  const doExportBlender = async () => {
+    if (!isBlendExportAvailable()) return;
+
+    const exportVoxels = mode === "lab" ? voxels : worldVoxels;
+    const blendName = blendFileNameForMode(mode, exportVoxels, {
+      shapeName: name,
+      pieceCount: pieces.length,
+    });
+    const payload =
+      mode === "lab"
+        ? buildLabExportPayload(voxels, look.unit, holes, name, blendName)
+        : { ...buildSceneExportPayload(pieces, worldVoxels, look.unit, holes), fileName: blendName };
+
+    setBlendExporting(true);
+    try {
+      const result = await requestBlendFile(payload);
+      if ("type" in result) {
+        window.alert(result.message);
+        return;
+      }
+      downloadBlob(result.blob, blendName);
+    } finally {
+      setBlendExporting(false);
+    }
   };
 
   return (
@@ -1101,6 +1134,16 @@ function App() {
             <Btn variant="primary" disabled={!canExport} onClick={doExportSTL}>
               {mode === "scene" ? "Export scene STL" : mode === "solver" ? "Export STL" : "Export STL"}
             </Btn>
+            {isBlendExportAvailable() ? (
+              <Btn
+                variant="primary"
+                disabled={!canExport || blendExporting}
+                onClick={() => void doExportBlender()}
+                title="Download .blend from Python export API"
+              >
+                {blendExporting ? "Exporting…" : "Export Blender"}
+              </Btn>
+            ) : null}
           </div>
         </footer>
       </main>

@@ -11,7 +11,10 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "docker:up": "docker compose up --build",
+    "docker:api": "docker compose up --build",
+    "docker:down": "docker compose down"
   },
   "overrides": {
     "rolldown": "1.2.1"

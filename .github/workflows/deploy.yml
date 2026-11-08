@@ -30,8 +30,10 @@ jobs:
         run: npm run build
         env:
           GITHUB_PAGES: "true"
-          # Must match the repo name when using user/org Pages (e.g. /cubes/ for github.com/you/cubes)
+          # User/org Pages: app is served under /{repo-name}/
           VITE_BASE_URL: /${{ github.event.repository.name }}/
+          # Optional: set repo variable or secret if you host the export API publicly
+          # VITE_EXPORT_API_URL: ${{ vars.VITE_EXPORT_API_URL }}
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4

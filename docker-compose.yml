@@ -1,0 +1,28 @@
+name: cubes
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_EXPORT_API_URL: http://localhost:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      export-api:
+        condition: service_started
+
+  export-api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      BLENDER_BIN: blender
+      CORS_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080,http://localhost:5173,http://127.0.0.1:5173"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
